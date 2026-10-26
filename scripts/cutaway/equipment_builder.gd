@@ -16,6 +16,7 @@ const H2O_A := 0.14
 const FUEL_E := 0.10
 
 const EngineStatusScript := preload("res://scripts/cutaway/engine_room_status.gd")
+const BayDress := preload("res://scripts/cutaway/bay_dressing.gd")
 
 const STEEL := Color(0.46, 0.48, 0.46)
 const STEEL_DK := Color(0.22, 0.24, 0.25)
@@ -84,6 +85,7 @@ static func add_hatch_leaf(parent: Node2D, id: String, x: float, door_top: float
 
 static func _equip_room(host: Node2D, room_name: String, size: Vector2) -> void:
 	_grate(host, size)
+	BayDress.add_backdrop(host, size, room_name)
 	match room_name:
 		"WaterIntakeRoom":
 			_water_intake(host, size)
@@ -112,8 +114,11 @@ static func _equip_room(host: Node2D, room_name: String, size: Vector2) -> void:
 		_:
 			push_warning("EquipmentBuilder: no kit for %s" % room_name)
 	# The power bay has its own engine kit. The shared pass would cover the turbine.
+	# Foreground props land before the bus tap so the meter can bind LEDs and glass.
+	BayDress.add_foreground(host, size, room_name)
 	if room_name != "PowerRoom":
 		_density_pass(host, size)
+		BayDress.add_bus_tap(host, size, room_name)
 
 
 static func _density_pass(host: Node2D, size: Vector2) -> void:
@@ -128,17 +133,9 @@ static func _density_pass(host: Node2D, size: Vector2) -> void:
 		_rect(g, clamp_x, 0.5, 2.0, 6.0, STEEL)
 		clamp_x += 22.0
 	_pipe_v(g, w - 7.0, 8.0, h - 22.0, 3.2, Color(0.72, 0.48, 0.16))
-	_valve(g, w - 11.0, h * 0.42, 4.5)
-	_ellipse(g, w - 22.0, 16.0, 6.0, 6.0, Color(0.10, 0.14, 0.16))
-	_ellipse(g, w - 22.0, 16.0, 4.2, 4.2, Color(0.15, 0.45, 0.42))
-	_rect(g, w - 23.0, 16.0, 7.0, 1.2, STEEL_LT)
-	_ellipse(g, w - 36.0, 16.0, 5.0, 5.0, Color(0.10, 0.12, 0.13))
-	_ellipse(g, w - 36.0, 16.0, 3.2, 3.2, Color(0.75, 0.55, 0.16))
-	_rect(g, w - 36.5, 12.0, 1.2, 8.0, STEEL_LT)
 	_rect(g, 4.0, h - 7.0, w * 0.42, 2.4, Color(0.55, 0.32, 0.12))
 	_rect(g, w * 0.46, h - 7.0, w * 0.28, 2.2, CYAN)
-	_lamp(g, 8.0, 10.0, Color(0.25, 0.82, 0.45))
-	# Left service manifold and a gauge bank. Faces only — no painted digits.
+	# Left service manifold. The live meter is BayDressing's bus tap, not a painted face.
 	_pipe_v(g, 4.0, 8.0, h - 18.0, 3.0, Color(0.28, 0.30, 0.32))
 	_pipe_h(g, 4.0, h * 0.55, w * 0.34, 3.2, Color(0.18, 0.36, 0.42))
 	_valve(g, w * 0.18, h * 0.55 + 2.0, 4.0)
@@ -149,13 +146,6 @@ static func _density_pass(host: Node2D, size: Vector2) -> void:
 	_rect(box, 16.0, 22.0, 3.0, 8.0, Color(0.20, 0.62, 0.38))
 	_rect(box, 11.0, 34.0, 8.0, 2.0, STEEL_LT)
 	_ellipse(box, 15.0, 40.0, 3.0, 3.0, Color(0.15, 0.55, 0.42))
-	var gy := 28.0
-	while gy < h * 0.62:
-		_ellipse(g, w - 22.0, gy, 5.5, 5.5, Color(0.08, 0.10, 0.12))
-		_ellipse(g, w - 22.0, gy, 3.6, 3.6, Color(0.20, 0.48, 0.46))
-		_rect(g, w - 23.2, gy - 4.0, 1.2, 8.0, STEEL_LT)
-		_pipe_h(g, w - 34.0, gy, 8.0, 2.0, Color(0.22, 0.50, 0.58))
-		gy += 14.0
 
 
 static func _water_intake(host: Node2D, size: Vector2) -> void:
@@ -303,38 +293,76 @@ static func _needle(parent: Node2D, needle_name: String, pivot: Vector2, length:
 static func _corridor(host: Node2D, size: Vector2) -> void:
 	var w := size.x
 	var h := size.y
-	var lad := _group(host, "Ladder")
-	_rect(lad, 12.0, 6.0, 3.0, h - 18.0, Color(0.62, 0.58, 0.40))
-	_rect(lad, 26.0, 6.0, 3.0, h - 18.0, Color(0.62, 0.58, 0.40))
-	var ry := 12.0
-	while ry < h - 16.0:
-		_rect(lad, 12.0, ry, 17.0, 2.0, STEEL_LT)
-		ry += 8.0
+	var floor_y := h - 11.0
+	var land_y := floor_y * 0.50
+	var shaft := _group(host, "LadderShaft")
+	_rect(shaft, 2.0, 4.0, 50.0, floor_y, Color(0.05, 0.06, 0.07))
+	_rect(shaft, 2.0, 4.0, 4.0, floor_y, STEEL)
+	_rect(shaft, 48.0, 4.0, 4.0, floor_y, STEEL_LT)
+	_rect(shaft, 10.0, 6.0, 4.5, floor_y - 8.0, Color(0.78, 0.64, 0.22))
+	_rect(shaft, 34.0, 6.0, 4.5, floor_y - 8.0, Color(0.78, 0.64, 0.22))
+	var ry := 11.0
+	while ry < floor_y - 6.0:
+		if absf(ry - land_y) > 5.0:
+			_rect(shaft, 10.0, ry, 28.5, 3.2, STEEL_LT)
+		ry += 9.0
+	for hy in [16.0, 38.0, 60.0]:
+		if float(hy) > floor_y - 18.0:
+			continue
+		_rect(shaft, 6.0, hy, 42.0, 2.2, Color(0.62, 0.66, 0.60))
+		_rect(shaft, 6.0, hy, 2.2, 9.0, Color(0.62, 0.66, 0.60))
+		_rect(shaft, 46.0, hy, 2.2, 9.0, Color(0.62, 0.66, 0.60))
+	_rect(shaft, 4.0, land_y, 52.0, 5.0, STEEL)
+	_rect(shaft, 4.0, land_y, 52.0, 2.0, YELLOW)
+	_rect(shaft, 8.0, land_y + 5.0, 3.0, floor_y - land_y - 6.0, STEEL_DK)
+	_rect(shaft, 44.0, land_y + 5.0, 3.0, floor_y - land_y - 6.0, STEEL_DK)
+	_pipe_v(shaft, 42.0, 8.0, floor_y - 14.0, 3.2, Color(0.20, 0.46, 0.55))
 	var tray := _group(host, "CableTray")
-	_rect(tray, 40.0, 7.0, w - 52.0, 2.0, Color(0.34, 0.38, 0.40))
-	_rect(tray, 40.0, 14.0, w - 52.0, 2.0, Color(0.34, 0.38, 0.40))
-	var tx := 46.0
-	while tx < w - 16.0:
-		_rect(tray, tx, 7.0, 2.0, 9.0, STEEL_DK)
-		_rect(tray, tx, 0.0, 1.5, 7.0, STEEL_DK)
-		tx += 14.0
-	_pipe_h(tray, 44.0, 9.0, w * 0.35, 3.0, INK)
-	_rect(tray, 44.0, 10.0, w * 0.35, 1.0, YELLOW)
-	_pipe_h(tray, w * 0.55, 9.5, w * 0.28, 2.0, Color(0.12, 0.16, 0.20))
-	_rect(tray, w * 0.55, 10.0, w * 0.28, 1.0, CYAN)
+	_rect(tray, 56.0, 5.0, w - 64.0, 3.0, Color(0.32, 0.36, 0.38))
+	_rect(tray, 56.0, 15.0, w - 64.0, 3.0, Color(0.32, 0.36, 0.38))
+	_pipe_h(tray, 58.0, 7.0, w - 70.0, 3.2, INK)
+	_rect(tray, 58.0, 7.6, w - 70.0, 1.3, YELLOW)
+	_pipe_h(tray, 58.0, 11.0, w - 70.0, 2.6, Color(0.10, 0.22, 0.30))
+	_rect(tray, 58.0, 11.4, w - 70.0, 1.1, CYAN)
+	var drop := 68.0
+	while drop < w - 78.0:
+		_rect(tray, drop, 5.0, 2.0, 13.0, STEEL_DK)
+		_pipe_v(tray, drop, 17.0, 18.0, 2.6, INK)
+		_rect(tray, drop, 18.0, 2.6, 1.1, YELLOW)
+		drop += 26.0
+	var win := _group(host, "Porthole")
+	var wx := w * 0.50
+	var wy := 38.0
+	_ellipse(win, wx, wy, 12.0, 12.0, STEEL)
+	_ellipse(win, wx, wy, 9.0, 9.0, Color(0.55, 0.78, 0.86))
+	_ellipse(win, wx - 3.0, wy - 3.0, 3.0, 2.2, Color(0.85, 0.95, 1.0, 0.70))
+	_rect(win, wx - 9.0, wy - 1.0, 18.0, 2.0, STEEL_DK)
+	_rect(win, wx - 1.0, wy - 9.0, 2.0, 18.0, STEEL_DK)
+	_ellipse(win, wx - 8.0, wy - 8.0, 1.5, 1.5, STEEL_LT)
+	_ellipse(win, wx + 8.0, wy - 8.0, 1.5, 1.5, STEEL_LT)
+	_ellipse(win, wx - 8.0, wy + 8.0, 1.5, 1.5, STEEL_LT)
+	_ellipse(win, wx + 8.0, wy + 8.0, 1.5, 1.5, STEEL_LT)
+	var locker := _group(host, "ToolLocker")
+	var lx := w - 70.0
+	_cabinet(locker, lx, 26.0, 28.0, floor_y - 32.0, Color(0.34, 0.38, 0.34))
+	_rect(locker, lx + 12.0, 40.0, 3.0, 12.0, YELLOW)
+	_rect(locker, lx + 4.0, 32.0, 2.0, 16.0, Color(0.72, 0.28, 0.16))
+	_rect(locker, lx + 8.0, 34.0, 2.0, 14.0, STEEL_LT)
+	_rect(locker, lx + 20.0, 36.0, 2.0, 12.0, Color(0.20, 0.45, 0.55))
 	var hatch := _group(host, "FloorHatch")
-	var hx := w * 0.42
-	_rect(hatch, hx, h - 16.0, 34.0, 10.0, Color(0.04, 0.05, 0.06))
-	_rect(hatch, hx, h - 16.0, 34.0, 2.0, YELLOW)
-	_rect(hatch, hx, h - 8.0, 34.0, 2.0, STEEL)
-	_rect(hatch, hx, h - 16.0, 2.0, 10.0, STEEL)
-	_rect(hatch, hx + 32.0, h - 16.0, 2.0, 10.0, STEEL)
-	var box := _group(host, "JunctionBox")
-	_plate(box, w - 40.0, h * 0.40, 24.0, 20.0, Color(0.36, 0.38, 0.34))
-	_lamp(box, w - 30.0, h * 0.40 + 6.0, CYAN)
-	_pipe_v(box, w - 46.0, 16.0, h * 0.40, 4.0, STEEL_DK)
-	_panel(host, w * 0.48, 20.0)
-	_lamp(host, 40.0, 22.0, YELLOW)
+	var hx := 78.0
+	_rect(hatch, hx, floor_y - 8.0, 36.0, 10.0, Color(0.04, 0.05, 0.06))
+	_rect(hatch, hx, floor_y - 8.0, 36.0, 2.0, YELLOW)
+	_rect(hatch, hx, floor_y, 36.0, 2.0, STEEL)
+	_rect(hatch, hx, floor_y - 8.0, 2.0, 10.0, STEEL)
+	_rect(hatch, hx + 34.0, floor_y - 8.0, 2.0, 10.0, STEEL)
+	_ellipse(hatch, hx + 18.0, floor_y - 3.0, 2.2, 2.2, STEEL_LT)
+	_vessel(host, 56.0, floor_y - 34.0, 9.0, 24.0, Color(0.74, 0.16, 0.12))
+	_rect(host, 58.0, floor_y - 36.0, 5.0, 3.0, STEEL_LT)
+	var stool := _group(host, "Stool")
+	_rect(stool, 66.0, floor_y - 16.0, 12.0, 3.0, Color(0.45, 0.36, 0.22))
+	_rect(stool, 68.0, floor_y - 13.0, 2.0, 10.0, STEEL_DK)
+	_rect(stool, 76.0, floor_y - 13.0, 2.0, 10.0, STEEL_DK)
 
 
 static func _ai_core(host: Node2D, size: Vector2) -> void:
@@ -366,7 +394,7 @@ static func _ai_core(host: Node2D, size: Vector2) -> void:
 	]), Color(0.28, 0.32, 0.36))
 	_rect(console, cx + 4.0, cy, w * 0.34, 3.0, STEEL_LT)
 	_plate(console, cx + 10.0, cy + 6.0, w * 0.26, 12.0, Color(0.08, 0.12, 0.16))
-	_rect(console, cx + 12.0, cy + 8.0, w * 0.22, 8.0, Color(0.25, 0.70, 0.82, 0.95))
+	_named_rect(console, "EnergyGlass", cx + 12.0, cy + 8.0, w * 0.22, 8.0, Color(0.25, 0.70, 0.82, 0.95))
 	_rect(console, cx + 14.0, cy + 10.0, w * 0.08, 1.5, Color(0.7, 0.95, 1.0))
 	_lamp(console, cx + 12.0, floor_y - 10.0, CYAN)
 	_lamp(console, cx + 20.0, floor_y - 10.0, Color(0.3, 0.9, 0.5))
@@ -595,6 +623,24 @@ static func _reserves(host: Node2D, size: Vector2) -> void:
 	var tanks := _group(host, "StorageTanks")
 	_storage_tank(tanks, 4.0, 14.0, 28.0, floor_y - 20.0, CRUDE, Color(0.05, 0.04, 0.03))
 	_storage_tank(tanks, w * 0.24, 22.0, 28.0, floor_y - 28.0, Color(0.62, 0.40, 0.12), FUEL)
+	var sight := _group(host, "FuelSight")
+	var glass_x := w * 0.24 + 10.5
+	var glass_y := 27.0
+	var glass_h := (floor_y - 28.0) - 12.0
+	_rect(sight, glass_x - 1.0, glass_y, 5.0, glass_h, Color(0.08, 0.10, 0.11))
+	var fuel_fill := Polygon2D.new()
+	fuel_fill.name = "FuelFill"
+	fuel_fill.antialiased = false
+	fuel_fill.color = FUEL
+	var fuel_span := Rect2(glass_x, glass_y + 1.0, 3.0, glass_h - 2.0)
+	fuel_fill.set_meta("span", fuel_span)
+	fuel_fill.polygon = PackedVector2Array([
+		fuel_span.position,
+		fuel_span.position + Vector2(fuel_span.size.x, 0.0),
+		fuel_span.position + fuel_span.size,
+		fuel_span.position + Vector2(0.0, fuel_span.size.y),
+	])
+	sight.add_child(fuel_fill)
 	_storage_tank(tanks, w * 0.46, 12.0, 28.0, floor_y - 18.0, Color(0.46, 0.50, 0.28), BIO)
 	_storage_tank(tanks, w * 0.70, 26.0, 26.0, floor_y - 32.0, Color(0.40, 0.44, 0.48), Color(0.25, 0.32, 0.40))
 	var man := _group(host, "Manifold")
@@ -884,6 +930,19 @@ static func _poly(parent: Node2D, pts: PackedVector2Array, color: Color) -> void
 	p.antialiased = false
 	p.color = color
 	p.polygon = pts
+	parent.add_child(p)
+
+
+static func _named_rect(parent: Node2D, node_name: String, x: float, y: float, w: float, h: float, color: Color) -> void:
+	if parent == null or w < 0.4 or h < 0.4:
+		return
+	var p := Polygon2D.new()
+	p.name = node_name
+	p.antialiased = false
+	p.color = color
+	p.polygon = PackedVector2Array([
+		Vector2(x, y), Vector2(x + w, y), Vector2(x + w, y + h), Vector2(x, y + h),
+	])
 	parent.add_child(p)
 
 

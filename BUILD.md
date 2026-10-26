@@ -62,7 +62,8 @@ Jay rejected `10-pass2-equipment.png`: a rectangular equipment panel in a hole i
 - Public calls used by the proof: `open_hatch`, `launch_sub`, `get_system_status`. `close_hatch`, `recover_sub`, `damage_hatch`, `repair_hatch` stay on the same node.
 - `PontoonLayer.visible = false`. `IntegratedRigLayer.draw_separated_pontoons = false`. One underside owner.
 - Fit: art width 1500, deck bottom 525, scale 1, two pontoons 240×112, spacing 618, hatch 900×58.
-- Room kits gained a `ServiceDensity` pass (pipes, breaker, gauge faces). No painted kW digits.
+- Room kits gained service pipes, windows, furniture, and StationSim bus taps. No painted kW digits.
+- `15-density-rooms.png` is a zoomed cutaway plate, not a copy of the sealed-hatch frame.
 - Proofs: `14-subbay-closed.png`, `14-subbay-open-deploy.png`, `15-density-rooms.png`, each with a `.md5` note.
 - StationSim is the only scrap / electronics / fuel_oil / power authority. Underdeck calls `try_spend`. No trench camera. No APK.
 

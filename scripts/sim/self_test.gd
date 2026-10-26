@@ -1,6 +1,8 @@
 extends SceneTree
 ## godot --headless --path . --script res://scripts/sim/self_test.gd
 
+const RoomPowerScript := preload("res://scripts/cutaway/room_power_readout.gd")
+
 func _initialize() -> void:
 	var inv := Inventory.new()
 	inv.set_capacity("biomass", 100.0)
@@ -166,3 +168,67 @@ func _test_station_authority() -> void:
 	unbound.free()
 	bay.free()
 	sim.free()
+	_test_room_readouts()
+
+
+func _test_room_readouts() -> void:
+	var sim := StationSim.new()
+	sim.setup()
+	var scrap0 := sim.inventory.get_amount("scrap")
+	var elec0 := sim.inventory.get_amount("electronics")
+	sim.clock.advance_n(1)
+	var live: RoomPowerReadout = _meter(sim, "ai_core")
+	var idle: RoomPowerReadout = _meter(sim, "refinery")
+	var held: RoomPowerReadout = _meter(sim, "organic_intake")
+	var live_read: Dictionary = live.get_reading()
+	var idle_read: Dictionary = idle.get_reading()
+	var held_read: Dictionary = held.get_reading()
+	_check(str(live_read["feed"]) == "LIVE", "ai_core feed %s" % live_read)
+	_check(float(live_read["load"]) > 0.9, "ai_core load %s" % live_read)
+	_check(str(idle_read["feed"]) == "IDLE", "refinery feed %s" % idle_read)
+	_check(float(idle_read["load"]) == 0.0, "refinery load %s" % idle_read)
+	_check(str(held_read["feed"]) == "STARVED", "intake feed %s" % held_read)
+	_check(float(live_read["fuel"]) > 0.3 and float(live_read["fuel"]) < 0.45, "fuel fraction %s" % live_read)
+	_check(live.bulb_color().g > idle.bulb_color().g + 0.25, "live lamp not distinct from idle")
+	_check(sim.inventory.get_amount("scrap") == scrap0, "readout spent scrap")
+	_check(sim.inventory.get_amount("electronics") == elec0, "readout spent electronics")
+	live.get_parent().free()
+	idle.get_parent().free()
+	held.get_parent().free()
+	sim.free()
+
+
+func _meter(sim: StationSim, module_id: String) -> RoomPowerReadout:
+	var host := Node2D.new()
+	var tap := Node2D.new()
+	tap.name = "BusTap"
+	host.add_child(tap)
+	var needle := Polygon2D.new()
+	needle.name = "NeedleLoad"
+	needle.polygon = PackedVector2Array([
+		Vector2(-0.7, 28.0), Vector2(0.0, 22.0), Vector2(0.7, 28.0),
+	])
+	tap.add_child(needle)
+	var fill := Polygon2D.new()
+	fill.name = "LoadFill"
+	var span := Rect2(0.0, 10.0, 4.0, 16.0)
+	fill.set_meta("span", span)
+	fill.polygon = PackedVector2Array([
+		Vector2(0, 10), Vector2(4, 10), Vector2(4, 26), Vector2(0, 26),
+	])
+	tap.add_child(fill)
+	var lamp := Node2D.new()
+	lamp.name = "LiveLamp"
+	tap.add_child(lamp)
+	var bulb := Polygon2D.new()
+	bulb.name = "Bulb"
+	bulb.polygon = PackedVector2Array([
+		Vector2(0, 0), Vector2(4, 0), Vector2(4, 4), Vector2(0, 4),
+	])
+	lamp.add_child(bulb)
+	var readout = RoomPowerScript.new()
+	readout.module_id = module_id
+	host.add_child(readout)
+	readout.capture(host)
+	readout.bind_sim(sim)
+	return readout

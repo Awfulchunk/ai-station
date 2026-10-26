@@ -26,7 +26,7 @@ That writes the current plate:
 
 - `proof-fixedcam/14-subbay-closed.png` — hatch sealed, two end pontoons
 - `proof-fixedcam/14-subbay-open-deploy.png` — hatch open, sub leaving the bay
-- `proof-fixedcam/15-density-rooms.png` — same camera, denser room service gear
+- `proof-fixedcam/15-density-rooms.png` — zoomed cutaway rooms, front wall hidden, distinct from 14
 - `proof-fixedcam/16-engine-room.png` — B2 power plant after the generator has produced real kW
 - a `.md5` note beside each
 
