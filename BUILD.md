@@ -64,7 +64,7 @@ Jay rejected `10-pass2-equipment.png`: a rectangular equipment panel in a hole i
 - Fit: art width 1500, deck bottom 525, scale 1, two pontoons 240×112, spacing 618, hatch 900×58.
 - Room kits gained a `ServiceDensity` pass (pipes, breaker, gauge faces). No painted kW digits.
 - Proofs: `14-subbay-closed.png`, `14-subbay-open-deploy.png`, `15-density-rooms.png`, each with a `.md5` note.
-- Not done: StationSim inventory is not the underdeck scrap/fuel/electricity ledger. No trench camera. No APK.
+- StationSim is the only scrap / electronics / fuel_oil / power authority. Underdeck calls `try_spend`. No trench camera. No APK.
 
 ## Engine room (2026-10-26)
 

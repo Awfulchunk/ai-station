@@ -1,6 +1,8 @@
 extends Node
 class_name StationSim
-## Authoritative station sim. Update order (this test, no sub/world):
+## Authoritative station sim for inventory amounts and the power bus.
+## Underdeck and the engine room read this state. They do not keep a second stockpile.
+## Update order (this test, no sub/world):
 ## wear/cooling → power gen + allocate → machines → inventory settle → alerts → HUD bind.
 
 signal state_changed
@@ -12,12 +14,24 @@ var modules: Dictionary = {}  # id -> StationModule
 var recipes: Dictionary = {}
 var alerts: Array = []
 var last_sanity_ok: bool = true
+## Empty after a successful try_spend. Set when a spend is refused.
+var last_action_reason: String = ""
 
 const GENERATOR_RATED_KW := 25.0
 const CORE_DEMAND_KW := 2.0
 const PROCESSOR_DEMAND_KW := 4.0
+## Former underdeck starting pile, granted once here. Not a second ledger.
+const START_SCRAP := 150.0
+const START_ELECTRONICS := 80.0
+const START_FUEL_OIL := 40.0
 
 func _ready() -> void:
+	setup()
+
+## Idempotent boot. Tests call this without waiting on the scene tree.
+func setup() -> void:
+	if clock != null:
+		return
 	clock = SimClock.new()
 	clock.name = "SimClock"
 	add_child(clock)
@@ -27,15 +41,20 @@ func _ready() -> void:
 	_init_inventory()
 	_init_modules()
 	_load_recipes()
-	# Seed starter stock so processor can run
+	# Seed starter stock so processor can run, plus the only scrap/electronics grant.
 	inventory.transfer_in("biomass", 80.0)
-	inventory.transfer_in("fuel_oil", 40.0)
+	inventory.transfer_in("fuel_oil", START_FUEL_OIL)
+	inventory.transfer_in("scrap", START_SCRAP)
+	inventory.transfer_in("electronics", START_ELECTRONICS)
 
 func _init_inventory() -> void:
+	# scrap cap was 100, which cannot hold START_SCRAP. electronics is new.
+	# Fuel is fuel_oil only — do not add a second "fuel" bin.
 	for pair in [
 		["biomass", 200.0], ["bio_nutrient", 100.0], ["waste", 100.0],
-		["fuel_oil", 100.0], ["scrap", 100.0], ["metal_stock", 50.0],
-		["components", 50.0], ["fish", 50.0], ["mixed_ore", 100.0]
+		["fuel_oil", 100.0], ["scrap", 400.0], ["metal_stock", 50.0],
+		["components", 50.0], ["fish", 50.0], ["mixed_ore", 100.0],
+		["electronics", 300.0]
 	]:
 		inventory.set_capacity(pair[0], pair[1])
 
@@ -213,6 +232,40 @@ func _tick_processor() -> void:
 			m.active_recipe = {}
 			m.job_progress = 0.0
 
+## Atomic inventory spend plus an optional kW reservation on the live bus.
+## power_kw is not an inventory id and is not stored charge.
+## On false, inventory and reservations are unchanged and last_action_reason is set.
+func try_spend(costs: Dictionary, power_kw: float = 0.0) -> bool:
+	last_action_reason = ""
+	if power_kw < 0.0:
+		last_action_reason = "Invalid power cost."
+		return false
+	for key in costs.keys():
+		var res_id := str(key)
+		var amount := float(costs[key])
+		if res_id == "fuel" or res_id == "electricity" or res_id == "power_kw":
+			last_action_reason = "Resource '%s' is not a station bin. Use fuel_oil, and pass bus power as power_kw." % res_id
+			return false
+		if amount < 0.0:
+			last_action_reason = "Invalid cost for %s." % res_id
+			return false
+		if not inventory.can_remove(res_id, amount):
+			last_action_reason = "Not enough %s (have %.2f, need %.2f)." % [res_id, inventory.get_amount(res_id), amount]
+			return false
+	if power_kw > 0.0 and not power.can_reserve(power_kw):
+		last_action_reason = "Insufficient station power (available %.2f kW, need %.2f kW)." % [power.available_kw(), power_kw]
+		return false
+	if not costs.is_empty() and not inventory.try_recipe(costs, {}):
+		last_action_reason = "Spend blocked; inventory unchanged."
+		return false
+	if power_kw > 0.0 and not power.reserve(power_kw):
+		for key in costs.keys():
+			inventory.transfer_in(str(key), float(costs[key]))
+		last_action_reason = "Insufficient station power (available %.2f kW, need %.2f kW)." % [power.available_kw(), power_kw]
+		return false
+	state_changed.emit()
+	return true
+
 func get_inspect(module_id: String) -> Dictionary:
 	if not modules.has(module_id):
 		return {"id": module_id, "error": "unknown module"}
@@ -240,10 +293,14 @@ func snapshot() -> Dictionary:
 		"power_generated": snappedf(power.generated, 0.01),
 		"power_requested": snappedf(power.requested, 0.01),
 		"power_granted": snappedf(power.granted_total, 0.01),
+		"power_available": snappedf(power.available_kw(), 0.01),
+		"power_reserved": snappedf(power.reserved_kw, 0.01),
 		"biomass": snappedf(inventory.get_amount("biomass"), 0.1),
 		"bio_nutrient": snappedf(inventory.get_amount("bio_nutrient"), 0.1),
 		"waste": snappedf(inventory.get_amount("waste"), 0.1),
 		"fuel_oil": snappedf(inventory.get_amount("fuel_oil"), 0.1),
+		"scrap": snappedf(inventory.get_amount("scrap"), 0.1),
+		"electronics": snappedf(inventory.get_amount("electronics"), 0.1),
 		"sanity_ok": last_sanity_ok,
 		"alerts": alerts.duplicate(),
 	}

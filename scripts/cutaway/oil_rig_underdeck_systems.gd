@@ -9,7 +9,7 @@ class_name OilRigUnderdeckSystems
 ## - left and right orange flotation pontoons with visible separation
 ## - steel keel, support braces, hazard markings, hydraulic tubes and service pipes
 ## - animated hatch opening/closing, submarine deployment/recovery, lights and water effects
-## - upgrades, damage, repair, resource costs, and a small gameplay state API
+## - upgrades, damage, repair, and costs charged to StationSim
 ##
 ## INTEGRATION NOTES
 ## 1. Add a Node2D named "UnderdeckSystems" to the existing station scene.
@@ -19,9 +19,12 @@ class_name OilRigUnderdeckSystems
 ## 3. Put this node BEHIND the main station art but IN FRONT of the water/background.
 ##    If your existing art already draws pontoons/hatch, disable those old drawings
 ##    to avoid duplicates. This script intentionally owns only the underside.
-## 4. Existing simulation can call the public methods below, or connect the signals.
+## 4. Call bind_sim() from the main scene, same pattern as EngineRoomStatus.
+##    Scrap, electronics, and fuel_oil live on StationSim inventory. Hatch, launch,
+##    and recovery power is a kW reservation on that power bus, not a local charge.
 ##
 ## MAIN PUBLIC METHODS
+##   bind_sim(station_sim)
 ##   open_hatch()
 ##   close_hatch()
 ##   launch_sub()
@@ -73,11 +76,11 @@ enum SubState { DOCKED, PREPARING, DEPLOYING, AWAY, RETURNING, RECOVERING, DISAB
 @export var pontoon_spacing_from_center: float = 615.0
 
 @export_group("Gameplay / Resources")
-@export var starting_scrap: int = 150
-@export var starting_electronics: int = 80
-@export var starting_fuel: float = 100.0
+# Costs only. Stock and bus power are StationSim. Fuel id is fuel_oil.
 @export var sub_fuel_cost: float = 8.0
-@export var launch_electricity_cost: float = 5.0
+@export var launch_power_kw: float = 5.0
+@export var hatch_power_kw: float = 3.0
+@export var recovery_power_kw: float = 4.0
 @export var repair_scrap_cost: int = 12
 @export var allow_launch_only_when_hatch_open: bool = true
 
@@ -99,10 +102,7 @@ var hatch_state: HatchState = HatchState.CLOSED
 var sub_state: SubState = SubState.DOCKED
 var hatch_damage: float = 0.0
 var pontoon_damage: Array[float] = [0.0, 0.0]
-var scrap: int = 150
-var electronics: int = 80
-var fuel: float = 100.0
-var electricity: float = 100.0
+var sim: StationSim
 var upgrades: Dictionary = {
     "hatch_actuators": 0,
     "sub_bay": 0,
@@ -140,10 +140,45 @@ func _ready() -> void:
     if start_hatch_open:
         hatch_state = HatchState.OPEN
         _hatch_progress = 1.0
-    scrap = starting_scrap
-    electronics = starting_electronics
-    fuel = starting_fuel
     queue_redraw()
+
+func bind_sim(sim_node: StationSim) -> void:
+    sim = sim_node
+    if sim and not sim.state_changed.is_connected(_on_sim_state):
+        sim.state_changed.connect(_on_sim_state)
+    queue_redraw()
+
+func _on_sim_state() -> void:
+    queue_redraw()
+
+func _amount(res_id: String) -> float:
+    if sim == null:
+        return 0.0
+    return sim.inventory.get_amount(res_id)
+
+func _station_generated_kw() -> float:
+    if sim == null:
+        return 0.0
+    return sim.power.generated
+
+func _station_power_fraction() -> float:
+    var rated := StationSim.GENERATOR_RATED_KW
+    if rated <= 0.0:
+        return 0.0
+    return clampf(_station_generated_kw() / rated, 0.0, 1.0)
+
+## Validate then spend on StationSim. Local hatch/sub state changes only after true.
+func _spend(costs: Dictionary, power_kw: float) -> bool:
+    if sim == null:
+        _last_error = "StationSim is not bound."
+        return false
+    if sim.try_spend(costs, power_kw):
+        _last_error = ""
+        return true
+    _last_error = sim.last_action_reason
+    if _last_error == "":
+        _last_error = "StationSim refused the spend."
+    return false
 
 func _process(delta: float) -> void:
     if Engine.is_editor_hint():
@@ -327,7 +362,7 @@ func _draw_tubes_and_pumps() -> void:
     var pump_y := y + 36
     draw_rect(Rect2(pump_x - 32, pump_y - 13, 64, 28), steel_dark)
     draw_rect(Rect2(pump_x - 25, pump_y - 7, 50, 16), steel_mid)
-    draw_circle(Vector2(pump_x, pump_y + 1), 6, pipe_cyan if electricity > 10 else Color("#ff4537"))
+    draw_circle(Vector2(pump_x, pump_y + 1), 6, pipe_cyan if _station_generated_kw() > 2.5 else Color("#ff4537"))
     _draw_pipe_polyline(PackedVector2Array([
         Vector2(-hatch_width * 0.5 - 30, pump_y + 1),
         Vector2(-hatch_width * 0.5 - 65, pump_y + 1),
@@ -418,7 +453,7 @@ func _draw_system_lights() -> void:
     # Power bar sits beside the hatch, not across the launch opening.
     var bar_x := -hatch_width * 0.5 - 160.0
     draw_rect(Rect2(bar_x, deck_bottom_y + 22, 80, 5), steel_dark)
-    draw_rect(Rect2(bar_x, deck_bottom_y + 22, 80.0 * clampf(electricity / 100.0, 0.0, 1.0), 5), pipe_cyan)
+    draw_rect(Rect2(bar_x, deck_bottom_y + 22, 80.0 * _station_power_fraction(), 5), pipe_cyan)
 
 func _advance_hatch(delta: float) -> void:
     var speed := hatch_animation_speed * (1.0 + float(upgrades["hatch_actuators"]) * 0.25)
@@ -472,12 +507,14 @@ func _advance_sub(delta: float) -> void:
                 _message = "SUB RECOVERED"
 
 func _run_passive_systems(delta: float) -> void:
-    if electricity > 0.0:
-        electricity = maxf(0.0, electricity - delta * 0.015)
-    if int(upgrades["repair_bots"]) > 0 and electricity > 5.0:
-        hatch_damage = maxf(0.0, hatch_damage - delta * 0.002 * float(upgrades["repair_bots"]))
-        for i in range(pontoon_damage.size()):
-            pontoon_damage[i] = maxf(0.0, pontoon_damage[i] - delta * 0.001 * float(upgrades["repair_bots"]))
+    # Repair drones run only while the station bus is generating. They do not drain a private charge.
+    if int(upgrades["repair_bots"]) <= 0:
+        return
+    if _station_generated_kw() <= 1.0:
+        return
+    hatch_damage = maxf(0.0, hatch_damage - delta * 0.002 * float(upgrades["repair_bots"]))
+    for i in range(pontoon_damage.size()):
+        pontoon_damage[i] = maxf(0.0, pontoon_damage[i] - delta * 0.001 * float(upgrades["repair_bots"]))
 
 func open_hatch() -> bool:
     if hatch_state == HatchState.JAMMED:
@@ -486,10 +523,8 @@ func open_hatch() -> bool:
     if hatch_state != HatchState.CLOSED:
         _last_error = "Hatch is not fully closed."
         return false
-    if electricity < 3.0:
-        _last_error = "Insufficient power to unlock hatch."
+    if not _spend({}, hatch_power_kw):
         return false
-    electricity -= 3.0
     hatch_state = HatchState.UNLOCKING
     _message = "UNLOCKING HATCH"
     return true
@@ -500,6 +535,8 @@ func close_hatch() -> bool:
         return false
     if hatch_state != HatchState.OPEN:
         _last_error = "Hatch is not fully open."
+        return false
+    if not _spend({}, hatch_power_kw):
         return false
     hatch_state = HatchState.CLOSING
     _message = "CLOSING HATCH"
@@ -512,12 +549,11 @@ func launch_sub() -> bool:
     if sub_state != SubState.DOCKED:
         _last_error = "Submarine is not docked."
         return false
-    var power_cost := launch_electricity_cost * (1.0 - float(upgrades["pump_efficiency"]) * 0.12)
-    if fuel < sub_fuel_cost or electricity < power_cost:
-        _last_error = "Insufficient fuel or power for launch."
+    var power_cost := launch_power_kw * (1.0 - float(upgrades["pump_efficiency"]) * 0.12)
+    if power_cost < 0.0:
+        power_cost = 0.0
+    if not _spend({"fuel_oil": sub_fuel_cost}, power_cost):
         return false
-    fuel -= sub_fuel_cost
-    electricity -= power_cost
     sub_state = SubState.PREPARING
     _sub_progress = 0.0
     submarine_state_changed.emit("preparing")
@@ -541,10 +577,8 @@ func recover_sub() -> bool:
     if hatch_state != HatchState.OPEN:
         _last_error = "Open the hatch before recovering the submarine."
         return false
-    if electricity < 4.0:
-        _last_error = "Insufficient power for recovery winch."
+    if not _spend({}, recovery_power_kw):
         return false
-    electricity -= 4.0
     sub_state = SubState.RECOVERING
     _sub_progress = 0.0
     submarine_state_changed.emit("recovering")
@@ -560,10 +594,8 @@ func damage_hatch(amount: float) -> void:
 
 func repair_hatch(amount: float = 0.25) -> bool:
     var cost := int(ceil(repair_scrap_cost * amount / 0.25))
-    if scrap < cost:
-        _last_error = "Not enough scrap to repair hatch."
+    if not _spend({"scrap": cost}, 0.0):
         return false
-    scrap -= cost
     hatch_damage = maxf(0.0, hatch_damage - maxf(amount, 0.0))
     if hatch_state == HatchState.JAMMED and hatch_damage < 0.8:
         hatch_state = HatchState.CLOSED
@@ -581,12 +613,11 @@ func damage_pontoon(index: int, amount: float) -> void:
 
 func repair_pontoon(index: int, amount: float = 0.25) -> bool:
     if index < 0 or index >= pontoon_damage.size():
+        _last_error = "No pontoon at that index."
         return false
     var cost := int(ceil(repair_scrap_cost * amount / 0.25))
-    if scrap < cost:
-        _last_error = "Not enough scrap to repair pontoon."
+    if not _spend({"scrap": cost}, 0.0):
         return false
-    scrap -= cost
     pontoon_damage[index] = maxf(0.0, pontoon_damage[index] - maxf(amount, 0.0))
     queue_redraw()
     return true
@@ -602,11 +633,8 @@ func purchase_upgrade(upgrade_id: String) -> bool:
         return false
     var scrap_cost := int(data["scrap"]) * (level + 1)
     var electronics_cost := int(data["electronics"]) * (level + 1)
-    if scrap < scrap_cost or electronics < electronics_cost:
-        _last_error = "Not enough scrap/electronics for " + str(data["name"])
+    if not _spend({"scrap": scrap_cost, "electronics": electronics_cost}, 0.0):
         return false
-    scrap -= scrap_cost
-    electronics -= electronics_cost
     upgrades[upgrade_id] = level + 1
     upgrade_purchased.emit(upgrade_id, int(upgrades[upgrade_id]))
     _message = str(data["name"]) + " upgraded to level " + str(upgrades[upgrade_id])
@@ -614,10 +642,19 @@ func purchase_upgrade(upgrade_id: String) -> bool:
     return true
 
 func add_resources(scrap_amount: int = 0, electronics_amount: int = 0, fuel_amount: float = 0.0, power_amount: float = 0.0) -> void:
-    scrap = maxi(0, scrap + scrap_amount)
-    electronics = maxi(0, electronics + electronics_amount)
-    fuel = maxf(0.0, fuel + fuel_amount)
-    electricity = clampf(electricity + power_amount, 0.0, 100.0)
+    if sim == null:
+        _last_error = "StationSim is not bound; resources were not stored."
+        return
+    _last_error = ""
+    if scrap_amount > 0:
+        sim.inventory.transfer_in("scrap", float(scrap_amount))
+    if electronics_amount > 0:
+        sim.inventory.transfer_in("electronics", float(electronics_amount))
+    if fuel_amount > 0.0:
+        sim.inventory.transfer_in("fuel_oil", fuel_amount)
+    if power_amount != 0.0:
+        _last_error = "Station power is the live bus, not a deposit."
+    sim.state_changed.emit()
 
 func get_total_buoyancy_rating() -> float:
     var total := 0.0
@@ -634,10 +671,11 @@ func get_system_status() -> Dictionary:
         "hatch_progress": _hatch_progress,
         "hatch_damage": hatch_damage,
         "sub_state": SubState.keys()[sub_state],
-        "scrap": scrap,
-        "electronics": electronics,
-        "fuel": fuel,
-        "electricity": electricity,
+        "scrap": _amount("scrap"),
+        "electronics": _amount("electronics"),
+        "fuel_oil": _amount("fuel_oil"),
+        "power_generated": _station_generated_kw(),
+        "power_available_kw": 0.0 if sim == null else sim.power.available_kw(),
         "pontoon_damage": pontoon_damage.duplicate(),
         "buoyancy_rating": get_total_buoyancy_rating(),
         "sub_range_multiplier": get_sub_range_multiplier(),

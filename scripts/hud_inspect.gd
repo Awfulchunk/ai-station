@@ -27,10 +27,11 @@ func _refresh() -> void:
 		return
 	var snap := _sim.snapshot()
 	var pause_s := "PAUSED" if snap["paused"] else "RUN"
-	status_label.text = "[b]AI STATION[/b]  tick=%d  %s  speed=%.0fx\nPower  gen=%.1f  req=%.1f  granted=%.1f kW\nInv  biomass=%.0f  bio_nutrient=%.0f  waste=%.0f  fuel_oil=%.0f  sanity=%s" % [
+	status_label.text = "[b]AI STATION[/b]  tick=%d  %s  speed=%.0fx\nPower  gen=%.1f  req=%.1f  granted=%.1f  avail=%.1f kW\nInv  biomass=%.0f  bio_nutrient=%.0f  waste=%.0f  fuel_oil=%.0f  scrap=%.0f  electronics=%.0f  sanity=%s" % [
 		snap["tick"], pause_s, snap["speed"],
-		snap["power_generated"], snap["power_requested"], snap["power_granted"],
+		snap["power_generated"], snap["power_requested"], snap["power_granted"], snap["power_available"],
 		snap["biomass"], snap["bio_nutrient"], snap["waste"], snap["fuel_oil"],
+		snap["scrap"], snap["electronics"],
 		"OK" if snap["sanity_ok"] else "FAIL"
 	]
 	if snap["alerts"].size() > 0:

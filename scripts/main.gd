@@ -49,6 +49,9 @@ func _ready() -> void:
 	var engine := oil_rig.find_child("EngineRoomStatus", true, false) as Node
 	if engine and engine.has_method("bind_sim"):
 		engine.bind_sim(sim)
+	var under := oil_rig.find_child("UnderdeckSystems", true, false) as Node
+	if under and under.has_method("bind_sim"):
+		under.bind_sim(sim)
 	print("AI Station coherent hull ready. plate=", PLATE_SIZE)
 	if "--proof" in OS.get_cmdline_user_args() or "proof" in OS.get_cmdline_user_args():
 		var cap = load("res://scripts/proof_capture_autoload.gd").new()
