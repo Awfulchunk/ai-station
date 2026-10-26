@@ -25,3 +25,11 @@
 ## Soft stamps
 
 None. Dual ledger is a real BLOCKER for shipping economy actions.
+
+## Post-merge stamp (CODI 2026-10-25 evening PT)
+
+**PR:** https://github.com/Awfulchunk/ai-station/pull/1 — merged to `main`.
+
+**PASS (scoped):** Dual-economy BLOCKER closed. Underdeck local `scrap`/`electronics`/`fuel`/`electricity` vars removed. Hatch/launch/recover/repair/upgrade go through `StationSim.try_spend`. `bind_sim` wired from `main.gd`. Self-test covers failed spend leaving stock unchanged. Docs + handoff on repo.
+
+**Still open (not this pass):** real sub missions; kWh battery; density/proof 15; jay-lock duplicate mechanics file; paid upgrades with weak consequences (`pipe_insulation`, `sub_battery`); APK.
