@@ -1,0 +1,1 @@
+sub_drop_hatch file=13-sub-drop-hatch.png md5=8ef297a803fbaad240f30d21f4639e17 bytes=52247 front_wall_hidden=true silhouette_sprite=false mixin_pods=false pontoon_layer=true pontoon_count=2 hatch=true tick=5 gen=24.99 req=15.7 granted=15.7 sanity=true

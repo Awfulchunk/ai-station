@@ -1,0 +1,9 @@
+{
+  "biomass_to_nutrients": {
+    "id": "biomass_to_nutrients",
+    "duration_s": 10,
+    "power_kw": 4.0,
+    "inputs": { "biomass": 10 },
+    "outputs": { "bio_nutrient": 6, "waste": 2 }
+  }
+}

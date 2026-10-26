@@ -1,0 +1,121 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/cutaway/interior_builder.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/cutaway/cutaway_controller.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/cutaway/hull_builder.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/cutaway/oil_rig_all_in_one_integration.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/cutaway/oil_rig_pontoon_layer.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/cutaway/oil_rig_underdeck_systems.gd" id="6"]
+
+[node name="OilRig" type="Node2D"]
+
+[node name="Background" type="Node2D" parent="."]
+z_index = -5
+
+[node name="Sky" type="Node2D" parent="Background"]
+
+[node name="Ocean" type="Node2D" parent="Background"]
+
+[node name="Exterior" type="Node2D" parent="."]
+z_index = 1
+script = ExtResource("3")
+
+[node name="Cranes" type="Node2D" parent="Exterior"]
+
+[node name="SignalTowers" type="Node2D" parent="Exterior"]
+
+[node name="SatelliteDish" type="Node2D" parent="Exterior"]
+
+[node name="ProcessTanks" type="Node2D" parent="Exterior"]
+
+[node name="AICoreHousing" type="Node2D" parent="Exterior"]
+
+[node name="Interior" type="Node2D" parent="."]
+z_index = 2
+script = ExtResource("1")
+
+[node name="CutEdges" type="Node2D" parent="Interior"]
+z_index = 0
+
+[node name="Floors" type="Node2D" parent="Interior"]
+z_index = 1
+
+[node name="Rooms" type="Node2D" parent="Interior"]
+z_index = 2
+
+[node name="Bulkheads" type="Node2D" parent="Interior"]
+z_index = 3
+
+[node name="Machinery" type="Node2D" parent="Interior"]
+z_index = 4
+
+[node name="Infrastructure" type="Node2D" parent="."]
+z_index = 5
+
+[node name="PowerCables" type="Node2D" parent="Infrastructure"]
+
+[node name="DataCables" type="Node2D" parent="Infrastructure"]
+
+[node name="WaterPipes" type="Node2D" parent="Infrastructure"]
+
+[node name="FuelPipes" type="Node2D" parent="Infrastructure"]
+
+[node name="Conveyors" type="Node2D" parent="Infrastructure"]
+
+[node name="IntegratedRigLayer" type="Node2D" parent="."]
+z_index = 4
+position = Vector2(0, 0)
+script = ExtResource("4")
+draw_station_deck = false
+draw_cutaway_rooms = false
+draw_ai_core = false
+draw_separated_pontoons = false
+animate_lights = false
+animate_power_flow = false
+show_debug_labels = false
+
+
+[node name="PontoonLayer" type="Node2D" parent="."]
+visible = false
+z_index = 5
+position = Vector2(800, 0)
+script = ExtResource("5")
+rig_width = 1500.0
+keel_y = 525.0
+pontoon_count = 2
+pontoon_gap = 1020.0
+pontoon_width = 240.0
+pontoon_height = 112.0
+show_sub_drop_hatch = true
+hatch_gap = 420.0
+animate_warning_lights = false
+
+[node name="UnderdeckSystems" type="Node2D" parent="."]
+z_index = 5
+position = Vector2(800, 0)
+script = ExtResource("6")
+art_width = 1500.0
+deck_bottom_y = 525.0
+system_scale = 1.0
+draw_pontoons = true
+draw_tubing = true
+draw_submarine = true
+animate_systems = true
+start_hatch_open = false
+pontoon_count = 2
+pontoon_width = 240.0
+pontoon_height = 112.0
+pontoon_spacing_from_center = 618.0
+hatch_width = 900.0
+hatch_height = 58.0
+
+[node name="FrontWall" type="Node2D" parent="."]
+visible = false
+z_index = 6
+
+[node name="WorldIndicators" type="Node2D" parent="."]
+z_index = 7
+
+[node name="CutawayController" type="Node" parent="."]
+script = ExtResource("2")
+cutaway_enabled = true
