@@ -47,6 +47,6 @@ Godot 4.3.stable. FrontWall stays hidden. The underside owner is `UnderdeckSyste
 | `PontoonLayer` | Previous underside drawing. Hidden. Exports kept. |
 | `Interior/LowerWorks` | Keel chords on the outer shoulders only. The center drop stays clear. |
 | `Interior/Machinery/BilgePump` | Ballast pump on the port shoulder, off the drop path |
-| `StationSim` and hotspots | Existing sim. Not rewired to the underdeck resource ledger. |
+| `StationSim` and hotspots | StationSim owns inventory and the power bus. Underdeck actions spend through `try_spend`. Hotspots still inspect modules. |
 
 Equipment, pipes, lamps, the mini-sub, and the fish marks inside the biology tanks are visual only.

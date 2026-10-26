@@ -8,6 +8,9 @@ var granted_total: float = 0.0
 var grants: Dictionary = {}  # module_id -> granted kW
 var requests: Dictionary = {}  # module_id -> requested kW
 var priorities: Dictionary = {}  # module_id -> int tier (0=core first)
+## kW committed by one-shot actions after allocate(). Not a stored charge.
+## clear_requests() drops it on the next sim tick.
+var reserved_kw: float = 0.0
 
 ## Priority tiers from Extreme Spec §6.3:
 ## 0 = Core/emergency; 1 = dock/safety; 2 = processing/refining; 3 = research/optional
@@ -15,6 +18,7 @@ var priorities: Dictionary = {}  # module_id -> int tier (0=core first)
 func clear_requests() -> void:
 	requests.clear()
 	requested = 0.0
+	reserved_kw = 0.0
 
 func set_generation(kw: float) -> void:
 	generated = maxf(0.0, kw)
@@ -48,3 +52,20 @@ func allocate() -> void:
 
 func granted(module_id: String) -> float:
 	return float(grants.get(module_id, 0.0))
+
+## Leftover bus kW this tick: generation minus module grants minus action reservations.
+func available_kw() -> float:
+	return maxf(0.0, generated - granted_total - reserved_kw)
+
+func can_reserve(kw: float) -> bool:
+	if kw <= 0.0:
+		return true
+	return kw <= available_kw() + 1e-6
+
+## Commit kw against this tick's surplus. Call can_reserve first; does not touch inventory.
+func reserve(kw: float) -> bool:
+	if not can_reserve(kw):
+		return false
+	if kw > 0.0:
+		reserved_kw += kw
+	return true
