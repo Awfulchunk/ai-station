@@ -55,6 +55,34 @@ func try_recipe(inputs: Dictionary, outputs: Dictionary) -> bool:
 		transfer_in(str(k), float(outputs[k]))
 	return true
 
+func export_state() -> Dictionary:
+	return {
+		"stock": stock.duplicate(),
+		"capacity": capacity.duplicate(),
+	}
+
+## Overlay a save onto the bins that already exist. fuel / electricity are not bins.
+func import_state(data: Dictionary) -> void:
+	var caps = data.get("capacity", {})
+	if typeof(caps) == TYPE_DICTIONARY:
+		for key in caps.keys():
+			var res_id := str(key)
+			if _rejected(res_id):
+				continue
+			set_capacity(res_id, maxf(0.0, float(caps[key])))
+	var saved = data.get("stock", {})
+	if typeof(saved) != TYPE_DICTIONARY:
+		return
+	for key in saved.keys():
+		var res_id := str(key)
+		if _rejected(res_id) or not capacity.has(res_id):
+			continue
+		var cap := float(capacity[res_id])
+		stock[res_id] = clampf(float(saved[key]), 0.0, cap)
+
+func _rejected(res_id: String) -> bool:
+	return res_id == "fuel" or res_id == "electricity" or res_id == "power_kw"
+
 func assert_sane() -> bool:
 	for k in stock.keys():
 		if float(stock[k]) < -1e-6:

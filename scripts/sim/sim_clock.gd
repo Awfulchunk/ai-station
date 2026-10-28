@@ -32,3 +32,27 @@ func advance_n(n: int) -> void:
 	for i in n:
 		tick += 1
 		tick_advanced.emit(tick)
+
+func set_accum(seconds: float) -> void:
+	_accum = clampf(seconds, 0.0, TICK_SECONDS)
+
+func accum_seconds() -> float:
+	return _accum
+
+func export_state() -> Dictionary:
+	return {
+		"tick": tick,
+		"paused": paused,
+		"speed": speed,
+		"accum": _accum,
+	}
+
+func import_state(data: Dictionary) -> void:
+	tick = maxi(int(data.get("tick", tick)), 0)
+	paused = bool(data.get("paused", paused))
+	var next_speed := float(data.get("speed", speed))
+	if next_speed == 1.0 or next_speed == 2.0 or next_speed == 4.0:
+		speed = next_speed
+	else:
+		speed = 1.0
+	set_accum(float(data.get("accum", _accum)))
