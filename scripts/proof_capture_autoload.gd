@@ -30,8 +30,18 @@ func run(main: Node) -> void:
 	await get_tree().process_frame
 	var closed_path := await _shot(get_viewport(), out, "14-subbay-closed.png")
 	var closed_tail := _status_tail(main, front, under, false, false)
+	var cam: Camera2D = main.camera
+	var saved_pos := cam.position
+	var saved_zoom := cam.zoom
+	# Density plate frames the cutaway rooms. It is not a second full-station copy.
+	cam.position = Vector2(800, 408)
+	cam.zoom = Vector2(1.85, 1.85)
+	await get_tree().process_frame
 	var density_path := await _shot(get_viewport(), out, "15-density-rooms.png")
 	var density_tail := _status_tail(main, front, under, false, false)
+	cam.position = saved_pos
+	cam.zoom = saved_zoom
+	await get_tree().process_frame
 
 	var opened := false
 	var launched := false
