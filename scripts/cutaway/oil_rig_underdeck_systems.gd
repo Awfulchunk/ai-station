@@ -116,6 +116,7 @@ var upgrades: Dictionary = {
 
 var _hatch_progress: float = 0.0
 var _sub_progress: float = 0.0
+var _launch_target: String = ""
 var _time: float = 0.0
 var _warning_phase: float = 0.0
 var _water_phase: float = 0.0
@@ -149,6 +150,10 @@ func bind_sim(sim_node: StationSim) -> void:
     queue_redraw()
 
 func _on_sim_state() -> void:
+    if sim != null and sim.sub != null and sim.sub.phase == SubVessel.Phase.DISABLED:
+        if sub_state != SubState.DISABLED:
+            sub_state = SubState.DISABLED
+            _message = sim.sub.fail_reason if sim.sub.fail_reason != "" else "SUB DISABLED"
     queue_redraw()
 
 func _amount(res_id: String) -> float:
@@ -184,14 +189,29 @@ func _process(delta: float) -> void:
     if Engine.is_editor_hint():
         queue_redraw()
         return
-    if animate_systems:
-        _time += delta
-        _warning_phase = fmod(_warning_phase + delta * 4.0, TAU)
-        _water_phase = fmod(_water_phase + delta * 0.8, TAU)
-        _advance_hatch(delta)
-        _advance_sub(delta)
-        _run_passive_systems(delta)
-        queue_redraw()
+    if not animate_systems:
+        return
+    advance_visual(delta)
+
+## Hatch, sub, and repair-drone motion follow SimClock. Pause freezes them.
+func advance_visual(delta: float) -> void:
+    var step := _sim_delta(delta)
+    if step <= 0.0:
+        return
+    _time += step
+    _warning_phase = fmod(_warning_phase + step * 4.0, TAU)
+    _water_phase = fmod(_water_phase + step * 0.8, TAU)
+    _advance_hatch(step)
+    _advance_sub(step)
+    _run_passive_systems(step)
+    queue_redraw()
+
+func _sim_delta(delta: float) -> float:
+    if sim != null and sim.clock != null:
+        if sim.clock.paused:
+            return 0.0
+        return delta * sim.clock.speed
+    return delta
 
 func _draw() -> void:
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE * system_scale)
@@ -408,6 +428,11 @@ func _draw_submarine() -> void:
         visibility = 0.0
     elif sub_state == SubState.RECOVERING:
         _sub_offset = Vector2(0, (1.0 - _sub_progress) * 170.0)
+    elif sub_state == SubState.DISABLED:
+        if sim != null and sim.sub != null and sim.sub.depth_m > 1.0:
+            visibility = 0.0
+        else:
+            _sub_offset = Vector2.ZERO
     if visibility <= 0.0:
         return
     var center := Vector2(bay_x, bay_top + 26.0) + _sub_offset
@@ -479,6 +504,8 @@ func _advance_hatch(delta: float) -> void:
 func _advance_sub(delta: float) -> void:
     var speed := 0.45 + float(upgrades["sub_bay"]) * 0.12
     match sub_state:
+        SubState.DOCKED:
+            pass
         SubState.PREPARING:
             _sub_progress += delta * speed
             if _sub_progress >= 1.0:
@@ -490,8 +517,12 @@ func _advance_sub(delta: float) -> void:
             if _sub_progress >= 1.0:
                 _sub_progress = 0.0
                 sub_state = SubState.AWAY
+                _depart_mission()
                 submarine_state_changed.emit("away")
                 _message = "SUB DEPLOYED"
+        SubState.AWAY:
+            if sim != null and sim.sub != null and sim.sub.phase == SubVessel.Phase.SURFACE:
+                _message = "SUB AT SURFACE — RECOVER"
         SubState.RETURNING:
             _sub_progress += delta * speed
             if _sub_progress >= 1.0:
@@ -503,8 +534,13 @@ func _advance_sub(delta: float) -> void:
             if _sub_progress >= 1.0:
                 _sub_progress = 0.0
                 sub_state = SubState.DOCKED
+                _finish_dock()
                 submarine_state_changed.emit("docked")
-                _message = "SUB RECOVERED"
+        SubState.DISABLED:
+            pass
+        _:
+            var _missing := sub_state
+            push_error("Underdeck unhandled sub state")
 
 func _run_passive_systems(delta: float) -> void:
     # Repair drones run only while the station bus is generating. They do not drain a private charge.
@@ -552,7 +588,17 @@ func launch_sub() -> bool:
     var power_cost := launch_power_kw * (1.0 - float(upgrades["pump_efficiency"]) * 0.12)
     if power_cost < 0.0:
         power_cost = 0.0
+    if sim != null:
+        var target := sim.sub_default_target()
+        if target == "":
+            _last_error = "No deposit is available."
+            return false
+        if not sim.sub_can_depart(target):
+            _last_error = sim.sub_fail_reason()
+            return false
+        _launch_target = target
     if not _spend({"fuel_oil": sub_fuel_cost}, power_cost):
+        _launch_target = ""
         return false
     sub_state = SubState.PREPARING
     _sub_progress = 0.0
@@ -564,6 +610,8 @@ func order_sub_return() -> bool:
     if sub_state != SubState.AWAY:
         _last_error = "Submarine is not away on a mission."
         return false
+    if sim != null:
+        sim.sub_order_return()
     sub_state = SubState.RETURNING
     _sub_progress = 0.0
     submarine_state_changed.emit("returning")
@@ -636,6 +684,10 @@ func purchase_upgrade(upgrade_id: String) -> bool:
     if not _spend({"scrap": scrap_cost, "electronics": electronics_cost}, 0.0):
         return false
     upgrades[upgrade_id] = level + 1
+    if sim != null and sim.sub != null and upgrade_id == "sub_battery":
+        sim.sub.apply_battery_level(int(upgrades[upgrade_id]))
+    if sim != null and sim.sub != null and upgrade_id == "sub_scanner":
+        sim.sub.apply_scanner_level(int(upgrades[upgrade_id]))
     upgrade_purchased.emit(upgrade_id, int(upgrades[upgrade_id]))
     _message = str(data["name"]) + " upgraded to level " + str(upgrades[upgrade_id])
     queue_redraw()
@@ -665,12 +717,49 @@ func get_total_buoyancy_rating() -> float:
 func get_sub_range_multiplier() -> float:
     return 1.0 + float(upgrades["sub_scanner"]) * 0.25 + float(upgrades["sub_battery"]) * 0.3
 
+func _depart_mission() -> void:
+    if sim == null or _launch_target == "":
+        return
+    var target := _launch_target
+    _launch_target = ""
+    if not sim.sub_depart(target):
+        _message = sim.sub_fail_reason()
+
+func _finish_dock() -> void:
+    if sim == null:
+        _message = "SUB RECOVERED"
+        return
+    var moved := sim.finish_recovery()
+    if sim.sub.cargo_total() > 1e-6:
+        _message = "DOCKED — CARGO WAITING (storage full)"
+    elif moved.is_empty():
+        _message = "SUB RECOVERED"
+    else:
+        _message = "SUB RECOVERED — CARGO UNLOADED"
+
 func get_system_status() -> Dictionary:
+    var depth_m := 0.0
+    var battery_kwh := 0.0
+    var hull := 100.0
+    var sub_phase := "DOCKED"
+    var sub_cargo := {}
+    if sim != null and sim.sub != null:
+        var st := sim.sub_status()
+        depth_m = float(st.get("depth_m", 0.0))
+        battery_kwh = float(st.get("battery_kwh", 0.0))
+        hull = float(st.get("hull", 100.0))
+        sub_phase = str(st.get("phase", "DOCKED"))
+        sub_cargo = st.get("cargo", {})
     return {
         "hatch_state": HatchState.keys()[hatch_state],
         "hatch_progress": _hatch_progress,
         "hatch_damage": hatch_damage,
         "sub_state": SubState.keys()[sub_state],
+        "sub_phase": sub_phase,
+        "depth_m": depth_m,
+        "battery_kwh": battery_kwh,
+        "hull": hull,
+        "sub_cargo": sub_cargo,
         "scrap": _amount("scrap"),
         "electronics": _amount("electronics"),
         "fuel_oil": _amount("fuel_oil"),

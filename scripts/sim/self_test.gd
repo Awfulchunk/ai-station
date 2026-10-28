@@ -34,6 +34,15 @@ func _initialize() -> void:
 	_test_station_authority()
 	if _failed:
 		return
+	_test_standby_power_and_wear()
+	if _failed:
+		return
+	_test_sub_mission_and_chain()
+	if _failed:
+		return
+	_test_pause_save_and_visual()
+	if _failed:
+		return
 	print("SELF_TEST_OK")
 	quit()
 
@@ -232,3 +241,281 @@ func _meter(sim: StationSim, module_id: String) -> RoomPowerReadout:
 	readout.capture(host)
 	readout.bind_sim(sim)
 	return readout
+
+
+func _test_standby_power_and_wear() -> void:
+	var lone := StationModule.new()
+	lone.set_mode(StationModule.Mode.RUNNING)
+	lone.condition = 50.0
+	lone.apply_wear(40.0)
+	_check(lone.mode == StationModule.Mode.FAULTED, "wear skipped FAULTED mode=%s cond=%s" % [lone.mode, lone.condition])
+	_check(lone.condition > 0.0, "fault clamped condition to zero")
+	_check(abs(lone.condition - StationModule.FAULT_CONDITION) < 1e-6, "fault condition %s" % lone.condition)
+	lone.apply_wear(lone.condition)
+	_check(lone.mode == StationModule.Mode.DESTROYED, "second wear did not destroy")
+	_check(lone.condition <= 0.0, "destroyed module still has condition")
+
+	var sim := StationSim.new()
+	sim.setup()
+	var research: StationModule = sim.modules["research"]
+	research.set_mode(StationModule.Mode.STANDBY)
+	research.power_demand = 8.0
+	sim.clock.advance_n(1)
+	var idle_req := float(sim.power.requests.get("research", -1.0))
+	_check(idle_req > 0.0, "standby requested no power")
+	_check(idle_req < research.power_demand, "standby draw %s is not below full %s" % [idle_req, research.power_demand])
+	research.set_mode(StationModule.Mode.RUNNING)
+	sim.clock.advance_n(1)
+	var full_req := float(sim.power.requests.get("research", -1.0))
+	_check(abs(full_req - research.power_demand) < 1e-6, "running draw %s" % full_req)
+
+	var comms: StationModule = sim.modules["comms"]
+	comms.set_mode(StationModule.Mode.RUNNING)
+	comms.condition = 40.0
+	comms.apply_wear(40.0)
+	_check(comms.mode == StationModule.Mode.FAULTED, "comms did not fault")
+	var scrap_before := sim.inventory.get_amount("scrap")
+	var elec_before := sim.inventory.get_amount("electronics")
+	_check(sim.try_repair_module("comms"), sim.last_action_reason)
+	_check(comms.mode == StationModule.Mode.STANDBY, "repair left mode %s" % comms.mode)
+	_check(comms.condition > StationModule.FAULT_CONDITION, "repair did not clear the fault line")
+	_check(sim.inventory.get_amount("scrap") < scrap_before, "repair spent no scrap")
+	_check(sim.inventory.get_amount("electronics") < elec_before, "repair spent no electronics")
+	comms.condition = 0.0
+	comms.set_mode(StationModule.Mode.DESTROYED, "condition zero")
+	var scrap_dead := sim.inventory.get_amount("scrap")
+	_check(not sim.try_repair_module("comms"), "destroyed module was repaired")
+	_check(abs(sim.inventory.get_amount("scrap") - scrap_dead) < 1e-6, "destroyed repair spent scrap")
+	_check(comms.mode == StationModule.Mode.DESTROYED, "destroyed mode changed")
+	sim.free()
+
+
+func _test_sub_mission_and_chain() -> void:
+	var sim := StationSim.new()
+	sim.setup()
+	_check(sim.sub != null, "sub vessel missing")
+	var ore0 := sim.inventory.get_amount("mixed_ore")
+	sim.sub.nodes["shelf_ore"]["remaining"] = 0.0
+	_check(not sim.sub_depart("shelf_ore"), "empty deposit launched")
+	_check("empty" in sim.sub_fail_reason().to_lower(), sim.sub_fail_reason())
+	_check(sim.sub_status()["phase"] == "DOCKED", "empty depart left phase %s" % sim.sub_status()["phase"])
+	_check(abs(sim.inventory.get_amount("mixed_ore") - ore0) < 1e-6, "empty depart minted ore")
+
+	sim.sub.nodes["shelf_ore"]["remaining"] = 10.0
+	sim.sub.nodes["shelf_ore"]["depth_m"] = 40.0
+	sim.sub.safe_depth_m = 30.0
+	_check(not sim.sub_depart("shelf_ore"), "over-depth depart succeeded")
+	_check("depth" in sim.sub_fail_reason().to_lower() or "hull" in sim.sub_fail_reason().to_lower(), sim.sub_fail_reason())
+
+	sim.sub.safe_depth_m = 90.0
+	sim.sub.battery_kwh = 0.01
+	_check(not sim.sub_depart("shelf_ore"), "low battery depart succeeded")
+	_check("battery" in sim.sub_fail_reason().to_lower(), sim.sub_fail_reason())
+	_check(sim.sub.cargo_total() == 0.0, "failed depart collected cargo")
+
+	sim.sub.hull = 0.0
+	sim.sub.battery_kwh = sim.sub.battery_capacity_kwh
+	_check(not sim.sub_depart("shelf_ore"), "destroyed hull departed")
+	_check(sim.sub_status()["phase"] == "DISABLED", "hull failure phase %s" % sim.sub_status()["phase"])
+	sim.sub.hull = 100.0
+	sim.sub.phase = SubVessel.Phase.DOCKED
+
+	sim.sub.cargo_capacity = 5.0
+	sim.sub.nodes["shelf_ore"]["remaining"] = 10.0
+	sim.sub.nodes["shelf_ore"]["rate"] = 2.0
+	sim.sub.nodes["shelf_ore"]["depth_m"] = 10.0
+	sim.sub.battery_kwh = sim.sub.battery_capacity_kwh
+	var battery0: float = sim.sub.battery_kwh
+	_check(sim.sub_depart("shelf_ore"), sim.sub_fail_reason())
+	sim.clock.advance_n(1)
+	_check(sim.sub_status()["phase"] == "MINE", "expected MINE after travel, got %s" % sim.sub_status()["phase"])
+	_check(abs(float(sim.sub_status()["depth_m"]) - 10.0) < 1e-6, "depth %s" % sim.sub_status()["depth_m"])
+	_check(sim.sub.cargo_total() == 0.0, "mined during the travel tick")
+	_check(abs(sim.inventory.get_amount("mixed_ore") - ore0) < 1e-6, "ore reached the station during travel")
+	sim.clock.advance_n(3)
+	_check(abs(sim.sub.cargo_total() - 5.0) < 1e-6, "cargo %s" % sim.sub.cargo_total())
+	_check(abs(float(sim.sub.nodes["shelf_ore"]["remaining"]) - 5.0) < 1e-6, "node remaining %s" % sim.sub.nodes["shelf_ore"]["remaining"])
+	_check(sim.sub_status()["phase"] == "RETURN", "full cargo phase %s" % sim.sub_status()["phase"])
+	_check(float(sim.sub_status()["battery_kwh"]) < battery0, "battery did not drain")
+	_check(abs(sim.inventory.get_amount("mixed_ore") - ore0) < 1e-6, "ore entered station inventory before dock")
+	var early := sim.unload_sub()
+	_check(early.is_empty(), "unload while returning moved cargo")
+	_check(abs(sim.sub.cargo_total() - 5.0) < 1e-6, "early unload changed cargo")
+	sim.clock.advance_n(1)
+	_check(sim.sub_status()["phase"] == "SURFACE", "surface phase %s depth %s" % [sim.sub_status()["phase"], sim.sub_status()["depth_m"]])
+	_check(abs(float(sim.sub_status()["depth_m"])) < 1e-6, "depth not zero at surface")
+	var moved: Dictionary = sim.unload_sub()
+	_check(abs(float(moved.get("mixed_ore", 0.0)) - 5.0) < 1e-6, "unloaded %s" % moved)
+	_check(abs(sim.inventory.get_amount("mixed_ore") - 5.0) < 1e-6, "station ore %s" % sim.inventory.get_amount("mixed_ore"))
+	_check(sim.sub.cargo_total() == 0.0, "cargo remained aboard after unload")
+	_check(sim.sub_status()["phase"] == "DOCKED", "phase after unload %s" % sim.sub_status()["phase"])
+
+	sim.inventory.set_capacity("mixed_ore", 2.0)
+	sim.inventory.stock["mixed_ore"] = 2.0
+	sim.sub.cargo = {"mixed_ore": 4.0}
+	sim.sub.phase = SubVessel.Phase.SURFACE
+	var partial: Dictionary = sim.unload_sub()
+	_check(abs(float(partial.get("mixed_ore", 0.0))) < 1e-6, "full bin accepted ore %s" % partial)
+	_check(abs(sim.inventory.get_amount("mixed_ore") - 2.0) < 1e-6, "full bin stock changed")
+	_check(abs(float(sim.sub.cargo.get("mixed_ore", 0.0)) - 4.0) < 1e-6, "rejected ore left the sub")
+	sim.inventory.set_capacity("mixed_ore", 100.0)
+
+	# Battery reserve stops mining and returns with the cargo already aboard.
+	sim.sub.cargo = {}
+	sim.sub.phase = SubVessel.Phase.DOCKED
+	sim.sub.depth_m = 0.0
+	sim.sub.cargo_capacity = 20.0
+	sim.sub.nodes["shelf_ore"]["remaining"] = 20.0
+	sim.sub.nodes["shelf_ore"]["depth_m"] = 10.0
+	sim.sub.battery_kwh = sim.sub.battery_capacity_kwh
+	_check(sim.sub_depart("shelf_ore"), sim.sub_fail_reason())
+	sim.clock.advance_n(1)
+	sim.sub.battery_kwh = SubVessel.RESERVE_KWH
+	var held: float = sim.sub.cargo_total()
+	sim.clock.advance_n(1)
+	_check(sim.sub_status()["phase"] == "RETURN", "reserve did not return, phase %s" % sim.sub_status()["phase"])
+	_check(abs(sim.sub.cargo_total() - held) < 1e-6, "mining continued on battery reserve")
+
+	# Sub cargo feeds the refinery chain into metal stock. No second ledger.
+	sim.inventory.stock["mixed_ore"] = 0.0
+	sim.sub.phase = SubVessel.Phase.DOCKED
+	sim.sub.depth_m = 0.0
+	sim.sub.cargo = {}
+	sim.sub.cargo_capacity = 16.0
+	sim.sub.battery_kwh = sim.sub.battery_capacity_kwh
+	sim.sub.nodes["shelf_ore"]["remaining"] = 16.0
+	sim.sub.nodes["shelf_ore"]["rate"] = 4.0
+	sim.sub.nodes["shelf_ore"]["depth_m"] = 10.0
+	_check(sim.sub_depart("shelf_ore"), sim.sub_fail_reason())
+	sim.clock.advance_n(6)
+	_check(sim.sub.cargo_total() > 0.0, "sortie collected nothing")
+	sim.sub_order_return()
+	sim.clock.advance_n(4)
+	_check(sim.sub_status()["phase"] == "SURFACE" or sim.sub_status()["phase"] == "DOCKED", sim.sub_status()["phase"])
+	var delivered: Dictionary = sim.unload_sub()
+	var delivered_ore := float(delivered.get("mixed_ore", 0.0))
+	_check(delivered_ore > 0.0, "dock did not deliver ore")
+	var ore_after_dock := sim.inventory.get_amount("mixed_ore")
+	_check(abs(ore_after_dock - delivered_ore) < 1e-4, "dock delivery did not match station stock")
+	sim.modules["processor"].set_mode(StationModule.Mode.OFF)
+	sim.inventory.stock["bio_nutrient"] = 0.0
+	sim.modules["refinery"].set_mode(StationModule.Mode.STANDBY)
+	sim.clock.advance_n(12)
+	_check(sim.inventory.get_amount("metal_stock") == 0.0, "refinery ran without bio_nutrient")
+	_check(abs(sim.inventory.get_amount("mixed_ore") - ore_after_dock) < 1e-4, "ore consumed without the catalyst")
+	sim.inventory.transfer_in("bio_nutrient", 6.0)
+	sim.modules["refinery"].set_mode(StationModule.Mode.STANDBY)
+	sim.modules["refinery"].active_recipe = {}
+	sim.modules["refinery"].job_progress = 0.0
+	sim.clock.advance_n(24)
+	_check(sim.inventory.get_amount("metal_stock") >= 3.0, "metal stock %s" % sim.inventory.get_amount("metal_stock"))
+	_check(sim.inventory.get_amount("mixed_ore") < ore_after_dock, "ore was not consumed")
+	_check(sim.inventory.get_amount("bio_nutrient") < 6.0, "catalyst was not consumed")
+	_check(sim.inventory.assert_sane(), "inventory insane after chain")
+	sim.free()
+
+
+func _test_pause_save_and_visual() -> void:
+	var sim := StationSim.new()
+	sim.setup()
+	var bay := OilRigUnderdeckSystems.new()
+	bay.bind_sim(sim)
+	bay.hatch_state = OilRigUnderdeckSystems.HatchState.OPENING
+	bay._hatch_progress = 0.2
+	sim.clock.paused = true
+	bay.advance_visual(0.5)
+	_check(abs(bay._hatch_progress - 0.2) < 1e-6, "hatch moved while paused %s" % bay._hatch_progress)
+	bay.sub_state = OilRigUnderdeckSystems.SubState.DEPLOYING
+	bay._sub_progress = 0.3
+	bay.advance_visual(0.5)
+	_check(abs(bay._sub_progress - 0.3) < 1e-6, "sub moved while paused %s" % bay._sub_progress)
+	_check(bay.sub_state == OilRigUnderdeckSystems.SubState.DEPLOYING, "sub state changed while paused")
+	sim.clock.paused = false
+	sim.clock.set_speed(1.0)
+	bay.advance_visual(0.05)
+	var hatch_slow: float = bay._hatch_progress
+	_check(hatch_slow > 0.2, "hatch did not advance when running")
+	sim.clock.set_speed(4.0)
+	bay.advance_visual(0.05)
+	var hatch_fast: float = bay._hatch_progress
+	_check(hatch_fast - hatch_slow > (hatch_slow - 0.2) * 3.0, "4x did not speed the hatch")
+
+	sim.clock.advance_n(4)
+	sim.clock.paused = true
+	sim.clock.set_speed(2.0)
+	sim.clock.set_accum(0.35)
+	var proc: StationModule = sim.modules["processor"]
+	proc.set_mode(StationModule.Mode.RUNNING)
+	proc.condition = 88.5
+	proc.job_progress = 3.5
+	proc.job_duration = 10.0
+	proc.blocked_reason = "holding"
+	proc.active_recipe = sim.recipes["biomass_to_nutrients"].duplicate(true)
+	sim.sub.phase = SubVessel.Phase.MINE
+	sim.sub.depth_m = 22.0
+	sim.sub.battery_kwh = 3.1
+	sim.sub.hull = 96.0
+	sim.sub.target_id = "shelf_ore"
+	sim.sub.cargo = {"mixed_ore": 4.0}
+	sim.sub.nodes["shelf_ore"]["remaining"] = 11.0
+	sim.inventory.stock["scrap"] = 123.0
+	var blob: Dictionary = sim.export_state()
+	var sim2 := StationSim.new()
+	sim2.setup()
+	sim2.clock.advance_n(2)
+	sim2.inventory.stock["scrap"] = 1.0
+	_check(not sim2.load_state("nope"), "malformed save accepted")
+	_check(abs(sim2.inventory.get_amount("scrap") - 1.0) < 1e-6, "malformed save changed stock")
+	_check(not sim2.load_state({"version": 99}), "future save accepted")
+	_check(sim2.load_state(blob), sim2.last_action_reason)
+	_check(sim2.clock.tick == sim.clock.tick, "tick %s vs %s" % [sim2.clock.tick, sim.clock.tick])
+	_check(sim2.clock.paused == true, "pause not restored")
+	_check(abs(sim2.clock.speed - 2.0) < 1e-6, "speed %s" % sim2.clock.speed)
+	_check(abs(sim2.clock.accum_seconds() - 0.35) < 1e-6, "accum %s" % sim2.clock.accum_seconds())
+	_check(abs(sim2.inventory.get_amount("scrap") - 123.0) < 1e-6, "scrap %s" % sim2.inventory.get_amount("scrap"))
+	_check(abs(sim2.inventory.get_amount("fuel_oil") - sim.inventory.get_amount("fuel_oil")) < 1e-4, "fuel drift on load")
+	var proc2: StationModule = sim2.modules["processor"]
+	_check(proc2.mode == StationModule.Mode.RUNNING, "processor mode %s" % proc2.mode)
+	_check(abs(proc2.condition - 88.5) < 1e-4, "condition %s" % proc2.condition)
+	_check(abs(proc2.job_progress - 3.5) < 1e-4, "job progress %s" % proc2.job_progress)
+	_check(str(proc2.active_recipe.get("id", "")) == "biomass_to_nutrients", "recipe not restored")
+	_check(proc2.blocked_reason == "holding", proc2.blocked_reason)
+	var st: Dictionary = sim2.sub_status()
+	_check(st["phase"] == "MINE", st["phase"])
+	_check(abs(float(st["depth_m"]) - 22.0) < 1e-6, "loaded depth")
+	_check(abs(float(st["battery_kwh"]) - 3.1) < 1e-6, "loaded battery")
+	_check(abs(float(st["hull"]) - 96.0) < 1e-6, "loaded hull")
+	_check(abs(float(st["cargo"].get("mixed_ore", 0.0)) - 4.0) < 1e-6, "loaded cargo")
+	_check(abs(float(sim2.sub.nodes["shelf_ore"]["remaining"]) - 11.0) < 1e-6, "deposit respawned on load")
+
+	# Winch recovery unloads into the same inventory. Cargo does not duplicate.
+	sim.sub.phase = SubVessel.Phase.RETURN
+	sim.sub.depth_m = 12.0
+	sim.sub.cargo = {"mixed_ore": 4.0}
+	sim.inventory.stock["mixed_ore"] = 0.0
+	sim.inventory.set_capacity("mixed_ore", 100.0)
+	bay.sub_state = OilRigUnderdeckSystems.SubState.RECOVERING
+	bay._sub_progress = 0.99
+	bay.hatch_state = OilRigUnderdeckSystems.HatchState.OPEN
+	sim.clock.paused = false
+	sim.clock.set_speed(1.0)
+	bay.advance_visual(1.0)
+	_check(bay.sub_state == OilRigUnderdeckSystems.SubState.DOCKED, "recovery did not dock")
+	_check(abs(sim.inventory.get_amount("mixed_ore") - 4.0) < 1e-4, "winch did not unload")
+	_check(sim.sub.cargo_total() == 0.0, "cargo duplicated aboard")
+	var reading_sim := StationSim.new()
+	reading_sim.setup()
+	reading_sim.clock.advance_n(2)
+	var engine := EngineRoomStatus.new()
+	engine.bind_sim(reading_sim)
+	_check(engine.get_visual_status() == "RUNNING", "engine visual %s" % engine.get_visual_status())
+	var status: Dictionary = bay.get_system_status()
+	_check(not status.has("electricity"), "status grew an electricity ledger")
+	_check(status.has("depth_m"), "status missing depth")
+	_check(status.has("battery_kwh"), "status missing battery")
+	_check(status.has("sub_cargo"), "status missing sub cargo")
+	bay.free()
+	engine.free()
+	reading_sim.free()
+	sim2.free()
+	sim.free()

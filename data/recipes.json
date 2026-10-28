@@ -5,5 +5,19 @@
     "power_kw": 4.0,
     "inputs": { "biomass": 10 },
     "outputs": { "bio_nutrient": 6, "waste": 2 }
+  },
+  "ore_to_refined": {
+    "id": "ore_to_refined",
+    "duration_s": 8,
+    "power_kw": 5.0,
+    "inputs": { "mixed_ore": 8, "bio_nutrient": 2 },
+    "outputs": { "refined_mineral": 5, "waste": 1 }
+  },
+  "refined_to_stock": {
+    "id": "refined_to_stock",
+    "duration_s": 8,
+    "power_kw": 4.0,
+    "inputs": { "refined_mineral": 4 },
+    "outputs": { "metal_stock": 3, "waste": 1 }
   }
 }
