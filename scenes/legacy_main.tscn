@@ -1,0 +1,37 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/sim/station_sim.gd" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/oil_rig.tscn" id="4"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(800, 360)
+enabled = true
+
+[node name="OilRig" parent="." instance=ExtResource("4")]
+
+[node name="StationRoot" type="Node2D" parent="."]
+visible = false
+
+[node name="Plate" type="Sprite2D" parent="StationRoot"]
+texture_filter = 1
+centered = true
+position = Vector2(800, 360)
+
+[node name="RoomLayers" type="Node2D" parent="StationRoot"]
+z_index = 2
+
+[node name="Hotspots" type="Node2D" parent="StationRoot"]
+z_index = 5
+
+[node name="FxLayer" type="Node2D" parent="StationRoot"]
+z_index = 10
+
+[node name="StationSim" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="HUD" parent="." instance=ExtResource("3")]

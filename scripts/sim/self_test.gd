@@ -43,6 +43,9 @@ func _initialize() -> void:
 	_test_pause_save_and_visual()
 	if _failed:
 		return
+	_test_deep_shell()
+	if _failed:
+		return
 	print("SELF_TEST_OK")
 	quit()
 
@@ -519,3 +522,116 @@ func _test_pause_save_and_visual() -> void:
 	reading_sim.free()
 	sim2.free()
 	sim.free()
+
+
+func _test_deep_shell() -> void:
+	var main_text := FileAccess.get_file_as_string("res://scenes/main.tscn")
+	_check(main_text.contains("pixel_station.gd"), "main scene is not the pixel station")
+	_check(not main_text.contains("oil_rig.tscn"), "main scene still instances the oil rig")
+	var legacy_text := FileAccess.get_file_as_string("res://scenes/legacy_main.tscn")
+	_check(legacy_text.contains("oil_rig.tscn"), "legacy scene lost the cutaway")
+	var main := (load("res://scenes/main.tscn") as PackedScene).instantiate()
+	_check(main.get_node_or_null("PixelStation") != null, "pixel station node missing")
+	_check(main.get_node_or_null("OilRig") == null, "oil rig instanced in the main scene")
+	_check(main.get_node_or_null("HUD") is RoomHud, "hud is not the six-room panel")
+	main.free()
+
+	var sim := StationSim.new()
+	sim.setup()
+	sim.clock.advance_n(1)
+	var rows: Array = sim.shell.bus_rows(sim)
+	_check(rows.size() == 6, "room bus %s" % rows.size())
+	var summed := float(sim.shell.other_load(sim)["granted"])
+	for row in rows:
+		summed += float(row["granted"])
+	_check(abs(summed - sim.power.granted_total) < 1e-3, "room grants %s vs bus %s" % [summed, sim.power.granted_total])
+	_check(sim.modules["exterior_lights"].mode == StationModule.Mode.OFF, "lights started on")
+	_check(float(sim.power.requests.get("exterior_lights", 0.0)) == 0.0, "lights drew power while off")
+	var spare := sim.power.available_kw()
+	_check(spare > 5.0, "life support ate the spare bus %s" % spare)
+	sim.set_exterior_lights(true)
+	sim.clock.advance_n(1)
+	_check(abs(float(sim.power.requests.get("exterior_lights", 0.0)) - ShellOps.LIGHTS_KW) < 1e-6, "lights request")
+	_check(sim.modules["exterior_lights"].power_granted + 1e-6 >= ShellOps.LIGHTS_KW, "lights were not fed")
+
+	var plain := StationSim.new()
+	plain.setup()
+	var boosted := StationSim.new()
+	boosted.setup()
+	plain.clock.advance_n(1)
+	boosted.clock.advance_n(1)
+	_arm_processor(plain)
+	_arm_processor(boosted)
+	_check(boosted.set_divert("processor", 4.0), boosted.last_action_reason)
+	plain.clock.advance_n(1)
+	boosted.clock.advance_n(1)
+	var plain_job: float = plain.modules["processor"].job_progress
+	var fast_job: float = boosted.modules["processor"].job_progress
+	_check(fast_job > plain_job + 0.5, "divert did not speed work %s vs %s" % [fast_job, plain_job])
+	_check(boosted.shell.divert_applied_kw > 3.0, "divert did not reserve kW %s" % boosted.shell.divert_applied_kw)
+	_check(not boosted.set_divert("ai_core", 4.0), "divert accepted a non-craft target")
+
+	var life := StationSim.new()
+	life.setup()
+	var air0: float = life.shell.life.air
+	life.clock.advance_n(3)
+	_check(life.shell.life.air + 1e-6 >= air0, "powered plant lost air")
+	_check(life.shell.life.powered, "plant reported unpowered")
+	life.modules["life_support"].set_mode(StationModule.Mode.OFF)
+	var air1: float = life.shell.life.air
+	var hull1: float = life.shell.life.hull
+	life.clock.advance_n(4)
+	_check(life.shell.life.air < air1 - 0.5, "air held with the plant off")
+	_check(life.shell.life.hull < hull1, "station hull held with the plant off")
+	_check(abs(life.shell.life.sea_pressure_bar() - LifeSupport.pressure_bar(ShellOps.STATION_DEPTH_M)) < 1e-6, "station sea pressure")
+
+	var ping := StationSim.new()
+	ping.setup()
+	_check(not ping.ping_sub(), "ping succeeded before generation")
+	ping.clock.advance_n(1)
+	_check(ping.ping_sub(), ping.last_action_reason)
+	_check(abs(float(ping.shell.last_ping["depth_pressure_bar"]) - LifeSupport.pressure_bar(0.0)) < 1e-6, "docked depth pressure")
+	_check(abs(float(ping.shell.last_ping["equipment_pressure_bar"]) - ping.shell.life.sea_pressure_bar()) < 1e-6, "docked equipment pressure")
+	_check(ping.sub_depart("shelf_biomass"), ping.sub_fail_reason())
+	ping.clock.advance_n(1)
+	_check(abs(ping.sub.depth_m - 10.0) < 1e-6, "travel depth %s" % ping.sub.depth_m)
+	_check(ping.ping_sub(), ping.last_action_reason)
+	_check(abs(float(ping.shell.last_ping["depth_pressure_bar"]) - LifeSupport.pressure_bar(10.0)) < 1e-6, "travel pressure")
+	_check(abs(float(ping.shell.last_ping["equipment_pressure_bar"]) - LifeSupport.pressure_bar(10.0)) < 1e-6, "travel equipment pressure")
+	_check(ping.power.reserved_kw + 1e-6 >= ShellOps.PING_KW, "ping did not reserve bus kW")
+
+	var gear := StationSim.new()
+	gear.setup()
+	var cap0: float = gear.sub.battery_capacity_kwh
+	var elec0: float = gear.inventory.get_amount("electronics")
+	_check(gear.upgrade_gear("battery"), gear.last_action_reason)
+	_check(int(gear.shell.gear_levels["battery"]) == 1, "battery level")
+	_check(gear.sub.battery_capacity_kwh > cap0 + 0.5, "battery capacity")
+	_check(gear.inventory.get_amount("electronics") < elec0, "gear spent no electronics")
+	var cargo_cap: float = gear.sub.cargo_capacity
+	_check(not gear.upgrade_gear("cargo"), "cargo rack crafted without metal_stock")
+	_check(abs(gear.sub.cargo_capacity - cargo_cap) < 1e-6, "failed craft changed cargo capacity")
+	gear.shell.life.hull = 70.0
+	var scrap0: float = gear.inventory.get_amount("scrap")
+	_check(gear.seal_station_hull(), gear.last_action_reason)
+	_check(gear.shell.life.hull > 70.0, "seal did not restore hull")
+	_check(gear.inventory.get_amount("scrap") < scrap0, "seal spent no scrap")
+	gear.prioritize_room("processor")
+	_check(gear.modules["processor"].priority == 0, "processor was not prioritized")
+	_check(gear.modules["ai_core"].priority == 2, "prioritize left the core tied at tier 0")
+
+	sim.free()
+	plain.free()
+	boosted.free()
+	life.free()
+	ping.free()
+	gear.free()
+
+
+func _arm_processor(sim: StationSim) -> void:
+	var proc: StationModule = sim.modules["processor"]
+	proc.active_recipe = sim.recipes["biomass_to_nutrients"].duplicate(true)
+	proc.job_duration = 10.0
+	proc.job_progress = 0.0
+	proc.condition = 100.0
+	proc.set_mode(StationModule.Mode.RUNNING, "")

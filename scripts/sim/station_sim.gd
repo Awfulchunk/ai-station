@@ -16,6 +16,8 @@ var last_sanity_ok: bool = true
 ## Empty after a successful try_spend. Set when a spend is refused.
 var last_action_reason: String = ""
 var sub: SubVessel
+## Six-room shell: lights, life support, divert, ping, gear. Null only before setup.
+var shell: ShellOps
 
 const SAVE_VERSION := 2
 const MODULE_REPAIR_SCRAP := 8.0
@@ -48,6 +50,8 @@ func setup() -> void:
 	sub.setup_nodes()
 	_init_inventory()
 	_init_modules()
+	shell = ShellOps.new()
+	shell.bind(self)
 	_load_recipes()
 	# Seed starter stock so processor can run, plus the only scrap/electronics grant.
 	inventory.transfer_in("biomass", 80.0)
@@ -81,6 +85,8 @@ func _init_modules() -> void:
 	_add_mod("processor", "PROCESSOR", 2, PROCESSOR_DEMAND_KW)  # recipe machine (E3/product flow)
 	_add_mod("comms", "COMMS", 3, 1.0)                          # C1 dish
 	_add_mod("research", "RESEARCH", 3, 3.0)                    # kept for Extreme Spec
+	_add_mod("exterior_lights", "LIGHTS", 3, ShellOps.LIGHTS_KW)
+	_add_mod("life_support", "LIFE_SUPPORT", 1, ShellOps.LIFE_KW)
 	# Intent modes
 	modules["ai_core"].set_mode(StationModule.Mode.RUNNING)
 	modules["generator"].set_mode(StationModule.Mode.RUNNING)
@@ -95,6 +101,8 @@ func _init_modules() -> void:
 	modules["biology"].set_mode(StationModule.Mode.STANDBY)
 	modules["waste"].set_mode(StationModule.Mode.STANDBY)
 	modules["walkways"].set_mode(StationModule.Mode.RUNNING)
+	modules["exterior_lights"].set_mode(StationModule.Mode.OFF)
+	modules["life_support"].set_mode(StationModule.Mode.RUNNING)
 
 func _add_mod(id: String, typ: String, prio: int, demand: float) -> void:
 	var m := StationModule.new()
@@ -141,6 +149,8 @@ func _on_tick(_tick: int) -> void:
 
 func _tick_once() -> void:
 	alerts.clear()
+	if shell != null:
+		shell.begin_tick()
 	for id in modules.keys():
 		var worn: StationModule = modules[id]
 		if worn.mode == StationModule.Mode.RUNNING:
@@ -168,6 +178,8 @@ func _tick_once() -> void:
 	power.allocate()
 	for id in modules.keys():
 		modules[id].power_granted = power.granted(id)
+	if shell != null:
+		shell.after_allocate(self)
 	_tick_recipe_module("processor")
 	_tick_recipe_module("refinery")
 	_tick_passive_modules()
@@ -261,7 +273,10 @@ func _tick_recipe_module(module_id: String) -> void:
 		return
 	m.set_mode(StationModule.Mode.RUNNING)
 	m.blocked_reason = ""
-	m.job_progress += 1.0 * m.condition_factor()
+	var speed := 1.0
+	if shell != null:
+		speed = shell.job_speed(self, module_id, need_pwr)
+	m.job_progress += 1.0 * m.condition_factor() * speed
 	if m.job_progress < m.job_duration:
 		return
 	if inventory.try_recipe(m.active_recipe["inputs"], m.active_recipe["outputs"]):
@@ -375,6 +390,42 @@ func try_repair_module(module_id: String) -> bool:
 		m.set_mode(StationModule.Mode.STANDBY, "")
 	return true
 
+func module_request_kw(module_id: String) -> float:
+	return _requested_kw(modules[module_id])
+
+
+func set_exterior_lights(on: bool) -> void:
+	shell.set_lights(self, on)
+
+
+func set_life_mode(mode: int) -> bool:
+	return shell.set_life_mode(self, mode)
+
+
+func set_divert(target: String, kw: float) -> bool:
+	return shell.set_divert(self, target, kw)
+
+
+func prioritize_room(module_id: String) -> bool:
+	return shell.prioritize_room(self, module_id)
+
+
+func ping_sub() -> bool:
+	return shell.ping(self)
+
+
+func upgrade_gear(kind: String) -> bool:
+	return shell.upgrade_gear(self, kind)
+
+
+func upgrade_room(module_id: String) -> bool:
+	return shell.upgrade_room(self, module_id)
+
+
+func seal_station_hull() -> bool:
+	return shell.seal_hull(self)
+
+
 func sub_status() -> Dictionary:
 	return sub.status()
 
@@ -451,6 +502,7 @@ func export_state() -> Dictionary:
 		"inventory": inventory.export_state(),
 		"modules": _export_modules(),
 		"sub": sub.export_state(),
+		"shell": shell.export_state() if shell != null else {},
 	}
 
 func load_state(data) -> bool:
@@ -476,6 +528,8 @@ func load_state(data) -> bool:
 	var sub_data = data.get("sub", {})
 	if typeof(sub_data) == TYPE_DICTIONARY and version >= 2:
 		sub.import_state(sub_data)
+	if data.has("shell") and shell != null and typeof(data["shell"]) == TYPE_DICTIONARY:
+		shell.import_state(self, data["shell"])
 	last_sanity_ok = inventory.assert_sane()
 	last_action_reason = ""
 	state_changed.emit()
@@ -539,7 +593,7 @@ func get_inspect(module_id: String) -> Dictionary:
 	}
 
 func snapshot() -> Dictionary:
-	return {
+	var snap := {
 		"tick": clock.tick,
 		"paused": clock.paused,
 		"speed": clock.speed,
@@ -564,3 +618,13 @@ func snapshot() -> Dictionary:
 		"sanity_ok": last_sanity_ok,
 		"alerts": alerts.duplicate(),
 	}
+	return _merge_shell_snapshot(snap)
+
+
+func _merge_shell_snapshot(snap: Dictionary) -> Dictionary:
+	if shell == null:
+		return snap
+	var extra: Dictionary = shell.snapshot(self)
+	for key in extra.keys():
+		snap[key] = extra[key]
+	return snap
