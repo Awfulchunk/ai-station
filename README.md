@@ -1,25 +1,51 @@
-# AI Station — fixed-cam oil rig cutaway
+# Deep Station — pixel sub-station
 
-Godot 4.3 side view of an autonomous oil-rig station. The rooms are the foundation. The hull is built around them.
+Godot 4.3. The main scene is a small pixel sub-station. Six HUD tabs run the rooms. The picture is not clickable and does not zoom.
+
+| Tab | What it drives |
+| --- | --- |
+| Energy | `PowerNet`, generator, `fuel_oil`, exterior lights, divert kW onto processor/refinery jobs |
+| Control | `SubVessel` depart, mine, return |
+| Storage | `Inventory` bins and `unload_sub` |
+| Mechanics | module wear, `try_repair_module`, room level, dive-gear levels |
+| Life Support | air, heat, station hull from the `life_support` module's granted kW |
+| Sub bay | ping (`try_spend` kW) plus depth, station, and equipment pressure |
+
+```bash
+godot --path . --resolution 1600x720
+godot --path . --resolution 1600x720 -- --legacy-cutaway
+```
+
+Space pauses. Keys 1 / 2 / 4 set sim speed. F1–F6 switch rooms.
+
+```bash
+xvfb-run -a -s "-screen 0 1600x720x24" godot --path . --display-driver x11 --audio-driver Dummy --resolution 1600x720 -- --proof
+```
+
+That writes `proof-deepsea/room-energy.png` through `room-sub_bay.png`. Each shot keeps all six tabs on screen.
+
+## Legacy cutaway
+
+The 10-bay oil-rig scene is `scenes/legacy_main.tscn`. It is not the playable target. `--legacy-cutaway` still boots it. The notes below describe that older hull.
 
 PASS1 is the cutaway shell: two decks, bulkheads, hatch openings, and a front wall that hides only itself. PASS2 fills every bay with `Polygon2D` equipment and routes pipes on the infrastructure layer. The coherent-hull pass removes the flattened rig photo. Sky, ocean, deck, end bulkheads, cranes, red-banded towers, dish, tanks, AI dome, pontoons, and the keel truss are scene geometry. `exterior_with_hole.png` is not drawn.
 
 `CutawayController` still hides only `FrontWall`. There is no grid, no room-label overlay, and no crew. EquipmentBuilder is unchanged as a system; its lower-works bays were moved so the truss sits in the gaps between the new pontoons.
 
-## Run
+## Legacy run
 
-Requires Godot 4.3.
+Requires Godot 4.3. Pass `--legacy-cutaway` or these commands load the old rig, not the six-room shell.
 
 ```bash
-godot --path . --resolution 1600x720
+godot --path . --resolution 1600x720 -- --legacy-cutaway
 ```
 
 Space pauses. Keys 1 / 2 / 4 set sim speed. C toggles the front wall. Clicking a bay still hits the existing hidden hotspot.
 
-## Proof
+## Legacy proof
 
 ```bash
-xvfb-run -a -s "-screen 0 1600x720x24" godot --path . --display-driver x11 --audio-driver Dummy --resolution 1600x720 -- --proof
+xvfb-run -a -s "-screen 0 1600x720x24" godot --path . --display-driver x11 --audio-driver Dummy --resolution 1600x720 -- --legacy-cutaway --proof
 ```
 
 That writes the current plate:

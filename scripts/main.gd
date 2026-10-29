@@ -1,5 +1,6 @@
 extends Node2D
-## Fixed-cam AI Station — REV02 PASS1 via Godot OilRig pack hierarchy.
+## Legacy 10-bay oil-rig cutaway. The playable boot is scripts/deep_main.gd.
+## Reach this scene with --legacy-cutaway or scenes/legacy_main.tscn.
 ## FrontWall hidden; Interior Polygon2D floors/bulkheads/rooms visible.
 ## NO schematic layers, NO labels, NO grid.
 

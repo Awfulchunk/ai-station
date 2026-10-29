@@ -9,7 +9,7 @@ const SIZE := Vector2i(1600, 720)
 func _initialize() -> void:
 	DirAccess.make_dir_recursive_absolute(OUT)
 	# Change to main scene
-	change_scene_to_file("res://scenes/main.tscn")
+	change_scene_to_file("res://scenes/legacy_main.tscn")
 	await process_frame
 	await process_frame
 	await process_frame
