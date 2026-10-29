@@ -32,7 +32,8 @@ Two orange end pontoons, blue center hatch, open water between the pontoons. Do 
    - Set the Android SDK path and the JDK path.
    - Create the debug keystore from that settings page. Leave the release keystore empty until a store build is actually requested.
 4. **Project → Export → Add… → Android**. Name the preset `Android`.
-   - Unique name: `com.awfulchunk.aistation`. Keep that name once a device has installed a build.
+   - Unique name: `app.tj.aistation`. Keep that name once a device has installed a build.
+   - Version name `0.1.0`, version code `1`. The delivered file is `AIStation-0.1.0.apk`.
    - Architectures: `arm64-v8a` for phones. Add `x86_64` only for an emulator.
    - Orientation: landscape.
    - Do not add extra permissions. The sim is offline.
